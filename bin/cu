@@ -1,0 +1,494 @@
+#!/bin/zsh
+# cu — computer-use harness for macOS (v2)
+# Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
+set -u
+CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; LOG="$CUDIR/log"
+mkdir -p "$SHOTS"
+CLICLICK="${CLICLICK:-/opt/homebrew/bin/cliclick}"
+OSASCRIPT="${CU_OSASCRIPT:-/usr/bin/osascript}"
+KEEP_SHOTS="${CU_KEEP_SHOTS:-20}"
+JSON_MODE=0
+
+log() { print -r -- "$(date '+%F %T')  $*" >> "$LOG"; }
+json_escape() {
+  local s="$1"
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}; s=${s//$'\r'/\\r}; s=${s//$'\t'/\\t}
+  print -rn -- "$s"
+}
+json_string() { print -rn -- '"'; json_escape "$1"; print -rn -- '"'; }
+json_error() { print -rn -- '{"ok":false,"error":'; json_string "$1"; print -r -- '}'; }
+die() {
+  if (( JSON_MODE )); then json_error "$*"; else print -r -- "cu: $*" >&2; fi
+  exit 1
+}
+warn() { print -r -- "cu: warning: $*" >&2; }
+as_escape() {
+  local s="$1"
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}
+  print -rn -- "$s"
+}
+need_cliclick() { [[ -x "$CLICLICK" ]] || die "cliclick not found at $CLICLICK (brew install cliclick)"; }
+need_accessibility() {
+  local out
+  out=$("$OSASCRIPT" -e 'tell application "System Events" to count of every process' 2>&1) || die "Accessibility permission is unavailable. Grant it to your terminal under System Settings > Privacy & Security > Accessibility. ($out)"
+}
+
+logical_w() { "$OSASCRIPT" -e 'tell application "Finder" to get bounds of window of desktop' | awk -F', *' '{print $3}'; }
+logical_h() { "$OSASCRIPT" -e 'tell application "Finder" to get bounds of window of desktop' | awk -F', *' '{print $4}'; }
+
+win_bounds() {
+  "$OSASCRIPT" <<OSA 2>/dev/null
+tell application "System Events"
+  tell process "$(as_escape "$1")"
+    set p to position of front window
+    set s to size of front window
+    return (item 1 of p as string) & "," & (item 2 of p as string) & "," & (item 1 of s as string) & "," & (item 2 of s as string)
+  end tell
+end tell
+OSA
+}
+
+# keep only the newest $KEEP_SHOTS images
+prune() {
+  local n; n=$(find "$SHOTS" -name '*.png' 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$n" -gt "$KEEP_SHOTS" ]]; then
+    find "$SHOTS" -name '*.png' -print0 2>/dev/null | xargs -0 ls -1t 2>/dev/null | tail -n +$((KEEP_SHOTS+1)) | while read -r f; do rm -f "$f"; done
+    log "pruned $((n - KEEP_SHOTS)) old shots"
+  fi
+}
+
+cmd_shot() {
+  local win="" name="shot"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -w|--window) win="$2"; shift 2 ;;
+      *) name="$1"; shift ;;
+    esac
+  done
+  warn "screenshots may contain private data; storing output under $SHOTS"
+  local raw="$SHOTS/${name}.raw.png" out="$SHOTS/${name}.png"
+  if [[ -n "$win" ]]; then
+    local b; b=$(win_bounds "$win")
+    [[ -n "$b" ]] || die "no front window for '$win'"
+    local x=${b%%,*}; local rest=${b#*,}; local y=${rest%%,*}
+    rest=${rest#*,}; local w=${rest%%,*}; local h=${rest##*,}
+    screencapture -x -o -R"${x},${y},${w},${h}" "$raw" || die "screencapture failed"
+    sips --resampleWidth "$w" "$raw" --out "$out" >/dev/null 2>&1 || cp "$raw" "$out"
+    print -r -- "window : $win  origin=${x},${y}  size=${w}x${h}"
+    print -r -- "NOTE   : image coords are WINDOW-relative; add origin before cu click"
+  else
+    screencapture -x -o "$raw" || die "screencapture failed"
+    local lw; lw=$(logical_w)
+    local pw; pw=$(sips -g pixelWidth "$raw" | awk '/pixelWidth/{print $2}')
+    sips --resampleWidth "$lw" "$raw" --out "$out" >/dev/null 2>&1 || cp "$raw" "$out"
+    print -r -- "screen : ${lw}x$(logical_h) pt   captured: ${pw}px   scale: $(( pw / lw ))x"
+  fi
+  rm -f "$raw"
+  local d; d=$(sips -g pixelWidth -g pixelHeight "$out" | awk '/pixel/{printf "%s ",$2}')
+  print -r -- "image  : $out  (${d% })"
+  log "shot $out"
+  prune
+}
+
+
+
+# ---- accessibility tree ---------------------------------------------------
+# Emits: ROLE | name | x,y  (x,y = element CENTRE, ready for cu click)
+# NOTE: System Events only reports windows for the FRONTMOST app, so this
+# activates the target app first. That steals focus — by design.
+_tree_raw() {
+  local app="$1"
+  local app_as; app_as=$(as_escape "$app")
+  "$OSASCRIPT" <<OSA 2>&1
+on walkEl(el, depth)
+  set acc to ""
+  if depth > 6 then return acc
+  tell application "System Events"
+    try
+      repeat with childRef in (UI elements of el)
+        set child to contents of childRef
+        try
+          set r to (role of child) as text
+          set nm to ""
+          try
+            set nm to (name of child) as text
+          end try
+          if nm is "missing value" then set nm to ""
+          if nm is "" then
+            try
+              set nm to (description of child) as text
+            end try
+          end if
+          if nm is "missing value" then set nm to ""
+          set p to position of child
+          set s to size of child
+          set acc to acc & r & " | " & nm & " | " & ((item 1 of p) + ((item 1 of s) div 2)) & "," & ((item 2 of p) + ((item 2 of s) div 2)) & linefeed
+        end try
+        set acc to acc & my walkEl(child, depth + 1)
+      end repeat
+    end try
+  end tell
+  return acc
+end walkEl
+
+tell application "System Events"
+  if not (exists process "$app_as") then return "ERR: process '$app_as' is not running"
+end tell
+tell application "$app_as" to activate
+set wc to 0
+repeat 10 times
+  delay 0.3
+  tell application "System Events"
+    tell process "$app_as"
+      try
+        set wc to count of windows
+      on error
+        set wc to 0
+      end try
+    end tell
+  end tell
+  if wc > 0 then exit repeat
+end repeat
+if wc is 0 then return "ERR: '$app_as' has no window (System Events saw none after 3s)"
+tell application "System Events"
+  tell process "$app_as"
+    set w to front window
+  end tell
+end tell
+return walkEl(w, 0)
+OSA
+}
+
+INTERACTIVE='^(AXButton|AXRadioButton|AXCheckBox|AXTextField|AXTextArea|AXMenuButton|AXMenuItem|AXPopUpButton|AXLink|AXCell|AXRow|AXComboBox|AXSlider|AXTabGroup|AXDisclosureTriangle)'
+
+cmd_tree() {
+  [[ $# -ge 1 ]] || die "usage: cu tree \"App Name\" [filter] [--all]"
+  local app="$1"; shift
+  local all=0 json=$JSON_MODE role="" filter=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all) all=1; shift ;;
+      --json) json=1; JSON_MODE=1; shift ;;
+      --role) [[ $# -ge 2 ]] || die "--role requires a role"; role="$2"; shift 2 ;;
+      *) filter="$1"; shift ;;
+    esac
+  done
+  need_accessibility
+  local out; out=$(_tree_raw "$app")
+  case "$out" in ERR:*) (( json )) && json_error "$out" || print -r -- "$out"; return 1 ;; esac
+  local res
+  if [[ $all -eq 1 ]]; then res="$out"; else res=$(print -r -- "$out" | grep -E "$INTERACTIVE"); fi
+  [[ -n "$filter" ]] && res=$(print -r -- "$res" | grep -i -- "$filter")
+  [[ -n "$role" ]] && res=$(print -r -- "$res" | awk -F' *\| *' -v wanted="$role" '$1 == wanted')
+  if [[ -z "$res" ]]; then
+    (( json )) && { print -r -- '{"ok":true,"app":'"$(json_string "$app")"',"elements":[]}'; return 0; }
+    print -r -- "(no matching elements — try --all, or a different filter)"
+    return 1
+  fi
+  if (( json )); then
+    print -rn -- '{"ok":true,"app":'; json_string "$app"; print -rn -- ',"elements":['
+    local first=1 line r nm xy x y
+    while IFS='|' read -r r nm xy; do
+      r="${r##[[:space:]]}"; r="${r%%[[:space:]]}"
+      nm="${nm##[[:space:]]}"; nm="${nm%%[[:space:]]}"
+      xy="${xy##[[:space:]]}"; x="${xy%%,*}"; y="${xy##*,}"
+      (( first )) || print -rn -- ','; first=0
+      print -rn -- '{"role":'; json_string "$r"; print -rn -- ',"name":'; json_string "$nm"; print -rn -- ',"x":'; print -rn -- "$x"; print -rn -- ',"y":'; print -rn -- "$y"; print -rn -- '}'
+    done <<< "$res"
+    print -r -- ']}'
+  else
+    print -r -- "$res"
+  fi
+  log "tree $app ${filter:-}"
+}
+
+cmd_find() { [[ $# -ge 2 ]] || die "usage: cu find \"App Name\" \"text\""; cmd_tree "$1" "$2"; }
+
+
+# Press a named element via the accessibility API — NOT coordinates.
+# Immune to z-order: it targets the element itself, so it cannot hit another app.
+_press() {
+  local app="$1" target="$2" wanted_role="${3:-}" wanted_index="${4:-1}"
+  local app_as target_as role_as
+  app_as=$(as_escape "$app"); target_as=$(as_escape "$target"); role_as=$(as_escape "$wanted_role")
+  "$OSASCRIPT" <<OSA 2>&1
+on collectMatches(el, depth, target, wantedRole, found)
+  if depth > 6 then return found
+  set acc to found
+  tell application "System Events"
+    try
+      repeat with childRef in (UI elements of el)
+        set child to contents of childRef
+        set nm to ""
+        set r to ""
+        try
+          set nm to (name of child) as text
+        end try
+        if nm is "missing value" then set nm to ""
+        if nm is "" then
+          try
+            set nm to (description of child) as text
+          end try
+        end if
+        try
+          set r to (role of child) as text
+        end try
+        if nm is target and (wantedRole is "" or r is wantedRole) then set end of acc to child
+        set acc to my collectMatches(child, depth + 1, target, wantedRole, acc)
+      end repeat
+    end try
+  end tell
+  return acc
+end collectMatches
+
+tell application "System Events"
+  if not (exists process "$app_as") then return "ERR: process '$app_as' is not running"
+end tell
+tell application "$app_as" to activate
+set wc to 0
+repeat 10 times
+  delay 0.3
+  tell application "System Events"
+    tell process "$app_as"
+      try
+        set wc to count of windows
+      on error
+        set wc to 0
+      end try
+    end tell
+  end tell
+  if wc > 0 then exit repeat
+end repeat
+if wc is 0 then return "ERR: '$app_as' has no window"
+tell application "System Events"
+  tell process "$app_as"
+    set w to front window
+  end tell
+end tell
+set matches to collectMatches(w, 0, "$target_as", "$role_as", {})
+set matchCount to count of matches
+  if matchCount is 0 then return "ERR: no matching element named '$target_as'"
+  if $wanted_index is 0 and matchCount > 1 then return "ERR: selector matched " & matchCount & " elements; add --role and/or --index"
+  if $wanted_index is 0 then set wanted_index to 1
+  if $wanted_index < 1 or $wanted_index > matchCount then return "ERR: selector matched " & matchCount & " element(s); index $wanted_index is out of range"
+set child to item $wanted_index of matches
+set r to "?"
+try
+  set r to (role of child) as text
+end try
+set nm to "$target_as"
+try
+  perform action "AXPress" of child
+  return "PRESSED (AXPress) " & r & " | " & nm & " | matches=" & matchCount
+end try
+try
+  perform action "AXOpen" of child
+  return "PRESSED (AXOpen) " & r & " | " & nm & " | matches=" & matchCount
+end try
+try
+  click child
+  return "PRESSED (click) " & r & " | " & nm & " | matches=" & matchCount
+end try
+return "FOUND but no supported action: " & r & " | " & nm & " | matches=" & matchCount
+OSA
+}
+
+# click an element by its accessible name — no coordinates, no screenshot
+cmd_clickel() {
+  [[ $# -ge 2 ]] || die "usage: cu clickel \"App Name\" \"Element name\" [--role ROLE] [--index N] [--json]"
+  local app="$1" target="$2" role="" index=0 json=$JSON_MODE; shift 2
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --role) [[ $# -ge 2 ]] || die "--role requires a role"; role="$2"; shift 2 ;;
+      --index) [[ $# -ge 2 ]] || die "--index requires a number"; index="$2"; shift 2 ;;
+      --json) json=1; JSON_MODE=1; shift ;;
+      *) die "unknown clickel option '$1'" ;;
+    esac
+  done
+  [[ "$index" == <-> && "$index" -gt 0 ]] || die "--index must be a positive integer"
+  need_accessibility
+  local res; res=$(_press "$app" "$target" "$role" "$index")
+  if (( json )); then
+    case "$res" in
+      ERR:*|FOUND*) json_error "$res"; return 1 ;;
+      *) print -rn -- '{"ok":true,"app":'; json_string "$app"; print -rn -- ',"name":'; json_string "$target"; print -rn -- ',"role":'; json_string "$role"; print -rn -- ',"index":'; print -rn -- "$index"; print -r -- ',"result":'"$(json_string "$res")"'}' ;;
+    esac
+  else
+    print -r -- "$res"
+  fi
+  log "clickel $app '$target' role=${role:-*} index=$index -> $res"
+  case "$res" in ERR:*|FOUND*) return 1 ;; esac
+}
+
+cmd_click()  { need_cliclick; "$CLICLICK" "c:$1,$2";  log "click $1,$2"; print -r -- "clicked $1,$2"; }
+cmd_dclick() { need_cliclick; "$CLICLICK" "dc:$1,$2"; log "dclick $1,$2"; print -r -- "double-clicked $1,$2"; }
+cmd_rclick() { need_cliclick; "$CLICLICK" "rc:$1,$2"; log "rclick $1,$2"; print -r -- "right-clicked $1,$2"; }
+cmd_move()   { need_cliclick; "$CLICLICK" "m:$1,$2";  log "move $1,$2"; print -r -- "moved to $1,$2"; }
+cmd_drag()   { need_cliclick; "$CLICLICK" "dd:$1,$2" "w:120" "dm:$3,$4" "w:120" "du:$3,$4"; log "drag $1,$2->$3,$4"; print -r -- "dragged $1,$2 -> $3,$4"; }
+cmd_type() {
+  need_cliclick
+  local secret=0 stdin_mode=0 text=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --secret) secret=1; shift ;;
+      --stdin) stdin_mode=1; shift ;;
+      *) [[ -z "$text" ]] || die "usage: cu type [--secret|--stdin] \"text\""; text="$1"; shift ;;
+    esac
+  done
+  if (( stdin_mode )); then
+    [[ -z "$text" ]] || die "do not combine --stdin with inline text"
+    text=$(<&0)
+  else
+    [[ -n "$text" ]] || die "usage: cu type [--secret|--stdin] \"text\""
+  fi
+  (( secret || stdin_mode )) && warn "typed text is not written to cu logs; prefer --stdin for secrets to avoid shell history"
+  "$CLICLICK" "t:$text"
+  log "type ${#text} chars"
+  if (( JSON_MODE )); then print -rn -- '{"ok":true,"typed_chars":'; print -rn -- "${#text}"; print -r -- '}'; else print -r -- "typed ${#text} chars"; fi
+}
+cmd_key()    { need_cliclick; "$CLICLICK" "kp:$1"; log "key $1"; print -r -- "pressed $1"; }
+cmd_pos()    { need_cliclick; "$CLICLICK" p; }
+cmd_color()  { need_cliclick; "$CLICLICK" "cp:$1,$2"; }
+cmd_wait()   { need_cliclick; "$CLICLICK" "w:$1"; }
+
+# Real wheel scrolling for up/down via CoreGraphics. top/bottom remain focus-based
+# keyboard commands because there is no portable wheel equivalent for those actions.
+cmd_scroll() {
+  local dir="${1:-down}" n="${2:-1}"
+  [[ "$n" == <-> && "$n" -gt 0 ]] || die "scroll count must be a positive integer"
+  local key delta
+  case "$dir" in
+    down) delta=-1 ;;
+    up) delta=1 ;;
+    top) key="home" ;;
+    bottom) key="end" ;;
+    *) die "usage: cu scroll up|down|top|bottom [count]" ;;
+  esac
+  if [[ "$dir" == up || "$dir" == down ]]; then
+    local j
+    for j in {1..${n}}; do
+      "$OSASCRIPT" -l JavaScript -e 'ObjC.import("CoreGraphics"); var e=$.CGEventCreateScrollWheelEvent(null, $.kCGScrollEventUnitLine, 2, '"$delta"', 0); $.CGEventPost($.kCGHIDEventTap, e);' >/dev/null 2>&1 || die "wheel scrolling failed; grant Accessibility to your terminal"
+      sleep 0.08
+    done
+  else
+    need_cliclick
+    local -a args
+    for j in {1..${n}}; do args+=("kp:$key" "w:80"); done
+    "$CLICLICK" $args
+  fi
+  log "scroll $dir x$n"; if (( JSON_MODE )); then print -rn -- '{"ok":true,"direction":'; json_string "$dir"; print -rn -- ',"count":'; print -rn -- "$n"; print -r -- '}'; else print -r -- "scrolled $dir x$n"; fi
+}
+
+# did the screen change? byte-compare two shots — free, no image tokens
+cmd_diff() {
+  local a="$SHOTS/${1:-before}.png" b="$SHOTS/${2:-after}.png"
+  [[ -f "$a" && -f "$b" ]] || die "need two shots: cu shot before; <action>; cu shot after; cu diff before after"
+  if cmp -s "$a" "$b"; then print -r -- "IDENTICAL — screen did not change"
+  else print -r -- "CHANGED — $(stat -f%z "$a") vs $(stat -f%z "$b") bytes"; fi
+}
+
+cmd_apps() { need_accessibility; "$OSASCRIPT" -e 'tell application "System Events" to get name of every process whose background only is false'; }
+cmd_open() { [[ $# -ge 1 ]] || die 'usage: cu open "App"'; local app_as; app_as=$(as_escape "$1"); "$OSASCRIPT" -e "tell application \"$app_as\" to activate" || die "could not activate '$1'"; log "activate $1"; print -r -- "activated $1"; }
+cmd_bounds() { win_bounds "$1" || die "no window for $1"; }
+
+cmd_clean() {
+  local n; n=$(find "$SHOTS" -name '*.png' 2>/dev/null | wc -l | tr -d ' ')
+  find "$SHOTS" -name '*.png' -delete 2>/dev/null
+  print -r -- "removed $n screenshot(s) from $SHOTS"
+  log "clean ($n removed)"
+}
+
+cmd_doctor() {
+  need_cliclick
+  need_accessibility
+  print -r -- "cliclick : $("$CLICLICK" -V)"
+  local before; before=$("$CLICLICK" p)
+  print -r -- "cursor   : $before"
+  local tw th; tw=$(( $(logical_w) / 2 )); th=$(( $(logical_h) / 2 ))
+  local after=""
+  local i
+  for i in {1..8}; do
+    "$CLICLICK" "m:$tw,$th" "w:150" >/dev/null 2>&1
+    after=$("$CLICLICK" p)
+    [[ "$after" == "$tw,$th" ]] && break
+  done
+  "$CLICLICK" "m:${before%%,*},${before##*,}" >/dev/null 2>&1
+  if [[ "$after" == "$tw,$th" ]]; then
+    print -r -- "input    : OK — Accessibility granted"
+  else
+    print -r -- "input    : FAIL — grant Accessibility to your terminal in"
+    print -r -- "           System Settings > Privacy & Security > Accessibility"
+  fi
+  local shots; shots=$(find "$SHOTS" -name '*.png' 2>/dev/null | wc -l | tr -d ' ')
+  print -r -- "shots    : $shots stored (auto-pruned to newest $KEEP_SHOTS), $(du -sh "$SHOTS" 2>/dev/null | cut -f1)"
+}
+
+cmd_log() { tail -n "${1:-25}" "$LOG" 2>/dev/null || print -r -- "(nothing logged yet)"; }
+
+usage() {
+cat <<'U'
+cu — computer-use harness (logical points throughout)
+
+SEE (cheap first, image only if needed)
+  cu [--json] tree "App" [filter] interactive elements + click coords — TEXT, ~0 tokens
+                              (activates the app; add --all for every element)
+  cu find "App" "Save"        same, filtered
+  cu shot [name]              full screen -> ~/.cu/shots/<name>.png  (~1.6k tokens to read)
+  cu shot -w "App"            one window only
+  cu color X Y                RGB at a pixel — verify a click for free
+  cu diff before after        did the screen change? byte compare, no tokens
+
+ACT
+  cu clickel "App" "Save"     click by name; add --role ROLE --index N for duplicates
+  cu click X Y                also dclick, rclick, move
+  cu drag X1 Y1 X2 Y2
+  cu type "text"              use --stdin --secret for credentials
+  cu key return               esc tab space arrow-up f1 delete ...
+  cu combo cmd s              cu combo cmd shift 4
+  cu scroll down|up|top|bottom [n]
+  cu wait MS
+
+CONTEXT
+  cu apps / cu open "Safari" / cu bounds "Safari"
+
+UPKEEP
+  cu doctor                   permissions + disk usage
+  cu clean                    delete all stored screenshots
+  cu log [n]                  action history
+
+Shots auto-prune to the newest 20 (override with CU_KEEP_SHOTS).
+U
+}
+
+cmd_combo() {
+  need_cliclick
+  local -a mods; local last
+  mods=("${@[1,-2]}"); last="${@[-1]}"
+  local -a args
+  for m in $mods; do args+=("kd:$m"); done
+  if [[ ${#last} -eq 1 ]]; then args+=("t:$last"); else args+=("kp:$last"); fi
+  for m in $mods; do args+=("ku:$m"); done
+  "$CLICLICK" $args
+  log "combo $*"; print -r -- "combo: $*"
+}
+
+if [[ $# -gt 0 && "$1" == "--json" ]]; then JSON_MODE=1; shift; fi
+[[ $# -eq 0 ]] && { usage; exit 0; }
+sub="$1"; shift
+case "$sub" in
+  shot) cmd_shot "$@" ;;          tree) cmd_tree "$@" ;;
+  find) cmd_find "$@" ;;          clickel) cmd_clickel "$@" ;;
+  click) cmd_click "$@" ;;      dclick) cmd_dclick "$@" ;;
+  rclick) cmd_rclick "$@" ;;    move) cmd_move "$@" ;;
+  drag) cmd_drag "$@" ;;        type) cmd_type "$@" ;;
+  key) cmd_key "$@" ;;          combo) cmd_combo "$@" ;;
+  scroll) cmd_scroll "$@" ;;    pos) cmd_pos ;;
+  color) cmd_color "$@" ;;      wait) cmd_wait "$@" ;;
+  diff) cmd_diff "$@" ;;        apps) cmd_apps ;;
+  open) cmd_open "$@" ;;        bounds) cmd_bounds "$@" ;;
+  doctor) cmd_doctor ;;         clean) cmd_clean ;;
+  log) cmd_log "$@" ;;
+  -h|--help|help) usage ;;
+  *) die "unknown command '$sub' (try: cu help)" ;;
+esac

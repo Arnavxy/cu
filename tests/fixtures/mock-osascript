@@ -1,0 +1,2 @@
+#!/bin/zsh
+print -r -- "${CU_MOCK_OSASCRIPT_RESULT:-}"
