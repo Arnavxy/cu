@@ -66,6 +66,14 @@ CU_DIR="$TMP/state" \
 assert_contains "$(cat "$multiline_log")" 't:first kp:return t:second' "multiline type emits Return keys"
 pass "multiline keyboard typing"
 
+delete_log="$TMP/delete.log"
+CU_DIR="$TMP/state" \
+  CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \
+  CU_MOCK_CLICK_LOG="$delete_log" \
+  "$CU" combo cmd backspace >/dev/null
+assert_contains "$(cat "$delete_log")" 'kd:cmd kp:delete ku:cmd' "backspace shortcut maps to cliclick delete"
+pass "backspace key compatibility"
+
 pointer_log="$TMP/pointer.log"
 CU_DIR="$TMP/state" \
   CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \

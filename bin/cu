@@ -850,7 +850,14 @@ cmd_paste() {
   log "paste $chars chars"
   if (( JSON_MODE )); then print -r -- "{\"ok\":true,\"pasted_chars\":$chars}"; else print -r -- "pasted $chars chars"; fi
 }
-cmd_key()    { need_cliclick; "$CLICLICK" "kp:$1"; log "key $1"; print -r -- "pressed $1"; }
+cliclick_key() {
+  case "$1" in
+    backspace) print -r -- delete ;;
+    escape) print -r -- esc ;;
+    *) print -r -- "$1" ;;
+  esac
+}
+cmd_key()    { need_cliclick; local key; key=$(cliclick_key "$1"); "$CLICLICK" "kp:$key"; log "key $1"; print -r -- "pressed $1"; }
 cmd_pos()    { need_cliclick; "$CLICLICK" p; }
 cmd_color()  { need_cliclick; "$CLICLICK" "cp:$1,$2"; }
 cmd_wait()   { need_cliclick; "$CLICLICK" "w:$1"; }
@@ -1023,6 +1030,7 @@ cmd_combo() {
   need_cliclick
   local -a mods; local last
   mods=("${@[1,-2]}"); last="${@[-1]}"
+  last=$(cliclick_key "$last")
   local -a args
   for m in $mods; do args+=("kd:$m"); done
   if [[ ${#last} -eq 1 ]]; then args+=("t:$last"); else args+=("kp:$last"); fi
