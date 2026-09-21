@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.2.6"
+CU_VERSION="0.2.7"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -66,6 +66,20 @@ OSA
 native_window() {
   native_available || return 1
   "$NATIVE" bounds "$1" 2>/dev/null
+}
+
+# Return 0 when the post-action AX target is still the same, 1 when it is gone
+# or changed, and 2 when AX cannot be read. This is narrower than a full
+# observe, so animated windows get semantic verification without a large tree.
+semantic_target_state() {
+  local app="$1" element_path_arg="$2" role="$3" name="$4" output current
+  output=$("$NATIVE" ax-tree "$app" --all 2>/dev/null) || return 2
+  current=$(print -r -- "$output" | awk -F '\t' -v wanted_path="$element_path_arg" '$1 == wanted_path { print; exit }')
+  [[ -n "$current" ]] || return 1
+  local current_role current_name
+  IFS=$'\t' read -r _ current_role current_name _ <<< "$current"
+  [[ "$current_role" == "$role" && "$current_name" == "$name" ]] && return 0
+  return 1
 }
 
 # Activate eagerly, but wait only when a target app has not published a usable
@@ -743,7 +757,7 @@ cmd_act() {
   local dx=$((bx - wx)) dy=$((by - wy))
   local expected_x=$((ex + dx)) expected_y=$((ey + dy))
   local before="" baseline="" after="" verification_available=false
-  local visual_activity="unknown" coordinate_fallback="none"
+  local visual_activity="unknown" semantic_effect="unknown" coordinate_fallback="none"
   if (( verify )); then
     before=$(_window_fingerprint "$app" 2>/dev/null) || before=""
     sleep 0.05
@@ -793,15 +807,32 @@ cmd_act() {
           [[ "$before" == "$after" ]] && changed=false || changed=true
         fi
       fi
-      if [[ "$changed" == false && "$source" == native_ax && "$action_result" == AXPress && "${CU_AX_COORDINATE_FALLBACK:-1}" == 1 && -x "$CLICLICK" ]]; then
+      if [[ "$source" == native_ax && "$changed" != true ]]; then
+        semantic_target_state "$app" "$element_path" "$role" "$name"
+        case $? in
+          0) semantic_effect="none" ;;
+          1) semantic_effect="changed"; changed=true ;;
+          *) semantic_effect="unknown" ;;
+        esac
+      fi
+      if [[ "$changed" != true && "$semantic_effect" == none && "$source" == native_ax && "$action_result" == AXPress && "${CU_AX_COORDINATE_FALLBACK:-1}" == 1 && -x "$CLICLICK" ]]; then
         _settled_click "$((expected_x + ew / 2))" "$((expected_y + eh / 2))" c >/dev/null
         coordinate_fallback="used"
         action_result="AXPress+CoordinateClick"
         sleep "${CU_VERIFY_DELAY:-0.20}"
         after=$(_window_fingerprint "$app" 2>/dev/null) || after=""
         if [[ -n "$before" && -n "$after" ]]; then
-          [[ "$before" == "$after" ]] && changed=false || changed=true
+          if [[ "$visual_activity" == animated ]]; then
+            changed=null
+          else
+            [[ "$before" == "$after" ]] && changed=false || changed=true
+          fi
         fi
+        semantic_target_state "$app" "$element_path" "$role" "$name"
+        case $? in
+          0) semantic_effect="none" ;;
+          1) semantic_effect="changed"; changed=true ;;
+        esac
       fi
     else
       window_state="closed"; changed=true; verification_available=true
@@ -813,9 +844,9 @@ cmd_act() {
     print -rn -- ',"action":'; json_string "$action_result"; print -rn -- ',"source":'; json_string "$source"
     print -rn -- ',"verification":{"available":'; print -rn -- "$verification_available"
     print -rn -- ',"changed":'; print -rn -- "$changed"; print -rn -- ',"window_state":'; json_string "$window_state"
-    print -rn -- ',"visual_activity":'; json_string "$visual_activity"; print -rn -- ',"coordinate_fallback":'; json_string "$coordinate_fallback"; print -r -- '}}'
+    print -rn -- ',"visual_activity":'; json_string "$visual_activity"; print -rn -- ',"semantic_effect":'; json_string "$semantic_effect"; print -rn -- ',"coordinate_fallback":'; json_string "$coordinate_fallback"; print -r -- '}}'
   else
-    print -r -- "acted on $element_id via $action_result; verification changed=$changed activity=$visual_activity fallback=$coordinate_fallback window=$window_state"
+    print -r -- "acted on $element_id via $action_result; verification changed=$changed activity=$visual_activity semantic=$semantic_effect fallback=$coordinate_fallback window=$window_state"
   fi
   log "act snapshot=$snapshot element=$element_id action=$action_result changed=$changed window=$window_state"
 }
