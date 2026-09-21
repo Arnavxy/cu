@@ -1,4 +1,5 @@
 #!/bin/zsh
+[[ -n "${CU_MOCK_NATIVE_LOG:-}" ]] && print -r -- "$*" >> "$CU_MOCK_NATIVE_LOG"
 mock_window_id="${CU_MOCK_WINDOW_ID:-42}"
 case "${1:-}" in
   bounds|activate)
@@ -37,6 +38,9 @@ case "${1:-}" in
   paste)
     [[ -f "${2:-}" ]] || exit 65
     print -r -- 'pasted'
+    ;;
+  scroll)
+    print -r -- 'scrolled'
     ;;
   *) exit 64 ;;
 esac

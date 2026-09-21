@@ -159,7 +159,7 @@ default and cannot be reused against a different process or window.
 | `cu shot [name]` / `cu shot -w "App"` | Capture the display or one application window |
 | `cu click`, `dclick`, `rclick`, `move`, `drag` | Use logical-point pointer input |
 | `cu type`, `paste --stdin`, `key`, `combo` | Send keyboard input or clipboard-safe multiline text |
-| `cu scroll up\|down\|top\|bottom [n]` | Send wheel or navigation scrolling |
+| `cu scroll [--app "App"] [--at X Y] up\|down\|top\|bottom [n]` | Target wheel or navigation scrolling at an application and point |
 | `cu color X Y`, `cu diff before after` | Verify visual state without image-model tokens |
 | `cu apps`, `open`, `bounds` | Inspect and activate application context |
 | `cu doctor`, `log`, `clean` | Diagnose, inspect history, and remove screenshots |
@@ -175,6 +175,19 @@ to OCR only when AX exposes no named elements.
 
 All public coordinates are logical macOS points. Multi-display origins and
 Retina scaling are resolved internally through CoreGraphics.
+
+Coordinate clicks deliberately use `move → settle → click` instead of a bare
+click event. This adds 35 ms by default and prevents small controls from missing
+hover, focus, or hit-test updates. Target wheel input explicitly when the app
+contains an embedded surface such as a simulator, canvas, or remote desktop:
+
+```bash
+cu scroll --app "Simulator" --at 640 500 down 4
+```
+
+With `--app` and no `--at`, `cu` targets the center of the front application
+window. For touch-style content that does not accept wheel events, use `cu drag`
+to perform the same direct manipulation a user would.
 
 ## Performance model
 
@@ -196,6 +209,7 @@ timings.
 | `CU_KEEP_SHOTS` | `20` | Number of named screenshots retained |
 | `CU_SNAPSHOT_TTL` | `120` | Maximum actionable snapshot age in seconds |
 | `CU_VERIFY_DELAY` | `0.20` | UI settling delay before verification |
+| `CU_CLICK_SETTLE_MS` | `35` | Delay between pointer movement and coordinate click |
 | `CLICLICK` | discovered from `PATH` | Input backend |
 | `CU_NATIVE` | sibling `cu-native` | Native AX/CoreGraphics/Vision helper |
 | `CU_OSASCRIPT` | `/usr/bin/osascript` | Legacy bridge and test override |
@@ -232,6 +246,8 @@ Current limitations:
 
 - macOS only; tested behavior varies with application accessibility quality.
 - Canvas, game, remote-desktop, and heavily custom UIs may require OCR or raw input.
+- Some embedded or touch-style surfaces ignore wheel events and require a drag gesture.
+- macOS prevents automation of secure input and other protected system surfaces.
 - Pixel verification establishes that the visible window changed, not that the user's high-level goal succeeded.
 - Native AX and Screen Recording still require explicit macOS privacy permissions.
 

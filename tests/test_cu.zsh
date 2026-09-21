@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.0" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.1" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -66,6 +66,15 @@ CU_DIR="$TMP/state" \
 assert_contains "$(cat "$multiline_log")" 't:first kp:return t:second' "multiline type emits Return keys"
 pass "multiline keyboard typing"
 
+pointer_log="$TMP/pointer.log"
+CU_DIR="$TMP/state" \
+  CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \
+  CU_MOCK_CLICK_LOG="$pointer_log" \
+  CU_CLICK_SETTLE_MS=25 \
+  "$CU" click 10 20 >/dev/null
+assert_contains "$(cat "$pointer_log")" 'm:10,20 w:25 c:10,20' "click moves and settles before pressing"
+pass "settled coordinate click"
+
 paste_result=$(
   print -rn -- $'first\nsecond' | \
     CU_DIR="$TMP/state" \
@@ -78,6 +87,18 @@ pass "clipboard-safe multiline paste"
 
 CLICLICK=/usr/bin/true CU_DIR="$TMP/state" "$CU" scroll top 2 >/dev/null
 pass "keyboard scroll fallback"
+
+scroll_log="$TMP/scroll-native.log"
+scroll_result=$(
+  CU_DIR="$TMP/state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_MOCK_NATIVE_LOG="$scroll_log" \
+  "$CU" --json scroll --app Demo --at 150 250 down 3
+)
+assert_contains "$(cat "$scroll_log")" 'scroll 150 250 -1 3' "scroll is posted at the target point"
+assert_contains "$scroll_result" '"point":[150,250]' "scroll reports its target point"
+assert_contains "$scroll_result" '"app":"Demo"' "scroll reports its target app"
+pass "targeted native scrolling"
 
 fallback_tree=$(
   CU_DIR="$TMP/state" \
@@ -105,7 +126,7 @@ fallback_click=$(
   "$CU" clicktext Demo Save
 )
 assert_contains "$fallback_click" 'PRESSED (OCRClick)' "clicktext reports OCR click"
-assert_contains "$(cat "$click_log")" 'c:150,250' "clicktext uses OCR screen coordinates"
+assert_contains "$(cat "$click_log")" 'm:150,250 w:35 c:150,250' "clicktext settles on OCR screen coordinates"
 pass "guarded OCR text click"
 
 display_click_log="$TMP/display-click.log"

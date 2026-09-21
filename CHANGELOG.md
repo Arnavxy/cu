@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.1 - 2026-09-21
+
+### Changed
+
+- Coordinate actions now move to the target and settle before clicking, improving
+  reliability for small and hover-sensitive controls.
+- Wheel input is now emitted by the native helper at an explicit logical point.
+- `scroll` can activate and target any application with `--app` and can address
+  embedded surfaces precisely with `--at X Y`.
+- Scroll results include their target application and point in JSON mode.
+
 ## 0.2.0 - 2026-09-21
 
 ### Added

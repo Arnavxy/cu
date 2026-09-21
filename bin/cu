@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.2.0"
+CU_VERSION="0.2.1"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -17,6 +17,7 @@ NATIVE="${CU_NATIVE:-$SCRIPT_DIR/cu-native}"
 SCREENCAPTURE="${CU_SCREENCAPTURE:-/usr/sbin/screencapture}"
 SIPS="${CU_SIPS:-/usr/bin/sips}"
 KEEP_SHOTS="${CU_KEEP_SHOTS:-20}"
+CLICK_SETTLE_MS="${CU_CLICK_SETTLE_MS:-35}"
 JSON_MODE=0
 
 log() { print -r -- "$(date '+%F %T')  $*" >> "$LOG"; }
@@ -512,7 +513,7 @@ _click_text_fallback() {
     IFS=$'\t' read -r display bx by bw bh <<< "$b"
   fi
   (( cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh )) || { print -r -- "ERR: OCR target moved outside the current window; retry the command"; return 1; }
-  "$CLICLICK" "c:$cx,$cy" >/dev/null
+  _settled_click "$cx" "$cy" c >/dev/null
   print -r -- "PRESSED (OCRClick) AXOCRText | $matched_name | matches=$count"
 }
 
@@ -725,7 +726,7 @@ cmd_act() {
     local ddx=$((cx - target_cx)) ddy=$((cy - target_cy)); (( ddx < 0 )) && ddx=$((-ddx)); (( ddy < 0 )) && ddy=$((-ddy))
     local tolerance=$(( ew > eh ? ew : eh )); (( tolerance < 30 )) && tolerance=30
     (( ddx <= tolerance && ddy <= tolerance )) || { runtime_fail stale_element "OCR target moved unexpectedly; observe again"; return 1; }
-    "$CLICLICK" "c:$cx,$cy" >/dev/null
+    _settled_click "$cx" "$cy" c >/dev/null
     action_result="OCRClick"
   else
     runtime_fail invalid_snapshot "unsupported element source '$source'"; return 1
@@ -761,11 +762,17 @@ cmd_act() {
   log "act snapshot=$snapshot element=$element_id action=$action_result changed=$changed window=$window_state"
 }
 
-cmd_click()  { need_cliclick; "$CLICLICK" "c:$1,$2";  log "click $1,$2"; print -r -- "clicked $1,$2"; }
-cmd_dclick() { need_cliclick; "$CLICLICK" "dc:$1,$2"; log "dclick $1,$2"; print -r -- "double-clicked $1,$2"; }
-cmd_rclick() { need_cliclick; "$CLICLICK" "rc:$1,$2"; log "rclick $1,$2"; print -r -- "right-clicked $1,$2"; }
+_settled_click() {
+  local x="$1" y="$2" action="${3:-c}"
+  need_cliclick
+  [[ "$CLICK_SETTLE_MS" == <-> ]] || die "CU_CLICK_SETTLE_MS must be a non-negative integer"
+  "$CLICLICK" "m:$x,$y" "w:$CLICK_SETTLE_MS" "$action:$x,$y"
+}
+cmd_click()  { _settled_click "$1" "$2" c;  log "click $1,$2"; print -r -- "clicked $1,$2"; }
+cmd_dclick() { _settled_click "$1" "$2" dc; log "dclick $1,$2"; print -r -- "double-clicked $1,$2"; }
+cmd_rclick() { _settled_click "$1" "$2" rc; log "rclick $1,$2"; print -r -- "right-clicked $1,$2"; }
 cmd_move()   { need_cliclick; "$CLICLICK" "m:$1,$2";  log "move $1,$2"; print -r -- "moved to $1,$2"; }
-cmd_drag()   { need_cliclick; "$CLICLICK" "dd:$1,$2" "w:120" "dm:$3,$4" "w:120" "du:$3,$4"; log "drag $1,$2->$3,$4"; print -r -- "dragged $1,$2 -> $3,$4"; }
+cmd_drag()   { need_cliclick; "$CLICLICK" "m:$1,$2" "w:$CLICK_SETTLE_MS" "dd:$1,$2" "w:80" "dm:$3,$4" "w:80" "du:$3,$4"; log "drag $1,$2->$3,$4"; print -r -- "dragged $1,$2 -> $3,$4"; }
 cmd_type() {
   need_cliclick
   local secret=0 stdin_mode=0 text=""
@@ -818,29 +825,53 @@ cmd_wait()   { need_cliclick; "$CLICLICK" "w:$1"; }
 # Real wheel scrolling for up/down via CoreGraphics. top/bottom remain focus-based
 # keyboard commands because there is no portable wheel equivalent for those actions.
 cmd_scroll() {
+  local app="" at_x="" at_y=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app) [[ $# -ge 2 ]] || die "--app requires a name"; app="$2"; shift 2 ;;
+      --at) [[ $# -ge 3 ]] || die "--at requires X Y"; at_x="$2"; at_y="$3"; shift 3 ;;
+      *) break ;;
+    esac
+  done
   local dir="${1:-down}" n="${2:-1}"
   [[ "$n" == <-> && "$n" -gt 0 ]] || die "scroll count must be a positive integer"
+  [[ -z "$at_x" || ( "$at_x" =~ '^-?[0-9]+$' && "$at_y" =~ '^-?[0-9]+$' ) ]] || die "scroll coordinates must be integers"
   local key delta
   case "$dir" in
     down) delta=-1 ;;
     up) delta=1 ;;
     top) key="home" ;;
     bottom) key="end" ;;
-    *) die "usage: cu scroll up|down|top|bottom [count]" ;;
+    *) die 'usage: cu scroll [--app "App"] [--at X Y] up|down|top|bottom [count]' ;;
   esac
+  if [[ -n "$app" ]]; then
+    activate_app "$app" || die "could not activate '$app'"
+    sleep 0.05
+    if [[ -z "$at_x" ]]; then
+      local row id pid wx wy ww wh owner title
+      row=$(native_window "$app") || die "no visible window matched '$app'"
+      IFS=$'\t' read -r id pid wx wy ww wh owner title <<< "$row"
+      at_x=$((wx + ww / 2)); at_y=$((wy + wh / 2))
+    fi
+  fi
+  if [[ -z "$at_x" ]]; then
+    need_cliclick
+    local pointer; pointer=$("$CLICLICK" p)
+    at_x=${pointer%%,*}; at_y=${pointer##*,}
+  fi
   if [[ "$dir" == up || "$dir" == down ]]; then
-    local j
-    for j in {1..${n}}; do
-      "$OSASCRIPT" -l JavaScript -e 'ObjC.import("CoreGraphics"); var e=$.CGEventCreateScrollWheelEvent(null, $.kCGScrollEventUnitLine, 2, '"$delta"', 0); $.CGEventPost($.kCGHIDEventTap, e);' >/dev/null 2>&1 || die "wheel scrolling failed; grant Accessibility to your terminal"
-      sleep 0.08
-    done
+    native_available || die "native helper is required for targeted scrolling"
+    "$NATIVE" scroll "$at_x" "$at_y" "$delta" "$n" >/dev/null 2>&1 || die "wheel scrolling failed; grant Accessibility to your terminal"
   else
     need_cliclick
+    "$CLICLICK" "m:$at_x,$at_y" "w:$CLICK_SETTLE_MS"
+    [[ -n "$app" ]] && _settled_click "$at_x" "$at_y" c >/dev/null
     local -a args
+    local j
     for j in {1..${n}}; do args+=("kp:$key" "w:80"); done
     "$CLICLICK" $args
   fi
-  log "scroll $dir x$n"; if (( JSON_MODE )); then print -rn -- '{"ok":true,"direction":'; json_string "$dir"; print -rn -- ',"count":'; print -rn -- "$n"; print -r -- '}'; else print -r -- "scrolled $dir x$n"; fi
+  log "scroll $dir x$n at=$at_x,$at_y app=$app"; if (( JSON_MODE )); then print -rn -- '{"ok":true,"direction":'; json_string "$dir"; print -rn -- ',"count":'; print -rn -- "$n"; print -rn -- ',"point":['; print -rn -- "$at_x,$at_y"; print -rn -- '],"app":'; json_string "$app"; print -r -- '}'; else print -r -- "scrolled $dir x$n at $at_x,$at_y${app:+ in $app}"; fi
 }
 
 # did the screen change? byte-compare two shots — free, no image tokens
@@ -940,7 +971,7 @@ ACT
   cu paste --stdin            fast multiline paste; restores the previous clipboard
   cu key return               esc tab space arrow-up f1 delete ...
   cu combo cmd s              cu combo cmd shift 4
-  cu scroll down|up|top|bottom [n]
+  cu scroll [--app "App"] [--at X Y] down|up|top|bottom [n]
   cu wait MS
 
 CONTEXT

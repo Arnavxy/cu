@@ -375,8 +375,40 @@ func pasteText(path: String) throws {
     }
 }
 
+func scrollWheel(at point: CGPoint, delta: Int32, count: Int) throws {
+    guard AXIsProcessTrusted() else {
+        throw NSError(domain: "cu-native", code: 9, userInfo: [NSLocalizedDescriptionKey: "Accessibility permission is unavailable"])
+    }
+    guard let move = CGEvent(
+        mouseEventSource: nil,
+        mouseType: .mouseMoved,
+        mouseCursorPosition: point,
+        mouseButton: .left
+    ) else {
+        throw NSError(domain: "cu-native", code: 10, userInfo: [NSLocalizedDescriptionKey: "could not create pointer event"])
+    }
+    move.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.025)
+
+    for index in 0..<count {
+        guard let event = CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: .line,
+            wheelCount: 1,
+            wheel1: delta,
+            wheel2: 0,
+            wheel3: 0
+        ) else {
+            throw NSError(domain: "cu-native", code: 11, userInfo: [NSLocalizedDescriptionKey: "could not create scroll event"])
+        }
+        event.location = point
+        event.post(tap: .cghidEventTap)
+        if index + 1 < count { Thread.sleep(forTimeInterval: 0.035) }
+    }
+}
+
 func usage() -> Never {
-    fputs("usage: cu-native windows [app] | bounds APP | display APP | activate APP | app-info APP | ocr IMAGE X Y | fingerprint IMAGE | paste FILE | ax-status | ax-tree APP | ax-perform PID PATH ROLE NAME X Y W H\n", stderr)
+    fputs("usage: cu-native windows [app] | bounds APP | display APP | activate APP | app-info APP | ocr IMAGE X Y | fingerprint IMAGE | paste FILE | scroll X Y DELTA COUNT | ax-status | ax-tree APP | ax-perform PID PATH ROLE NAME X Y W H\n", stderr)
     exit(64)
 }
 
@@ -447,6 +479,21 @@ case "paste":
         print("pasted")
     } catch {
         fputs("paste failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+
+case "scroll":
+    guard
+        args.count == 5,
+        let x = Double(args[1]), let y = Double(args[2]),
+        let delta = Int32(args[3]), let count = Int(args[4]),
+        count > 0
+    else { usage() }
+    do {
+        try scrollWheel(at: CGPoint(x: x, y: y), delta: delta, count: count)
+        print("scrolled")
+    } catch {
+        fputs("scroll failed: \(error.localizedDescription)\n", stderr)
         exit(1)
     }
 
