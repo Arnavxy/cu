@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.2.3"
+CU_VERSION="0.2.4"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -86,15 +86,18 @@ native_window_ready() {
 
 win_bounds() {
   local app="$1" b row id pid x y w h owner title
-  b=$(ax_win_bounds "$app")
-  if [[ "$b" =~ '^-?[0-9]+,-?[0-9]+,[0-9]+,[0-9]+$' ]]; then
-    print -r -- "$b"
+  # CoreGraphics resolves app names without asking hardened processes for AX.
+  # Prefer it whenever the helper exists so unknown/unresponsive apps fail fast.
+  if native_available; then
+    row=$(native_window "$app") || return 1
+    IFS=$'\t' read -r id pid x y w h owner title <<< "$row"
+    [[ -n "$x" && -n "$y" && -n "$w" && -n "$h" ]] || return 1
+    print -r -- "$x,$y,$w,$h"
     return 0
   fi
-  row=$(native_window "$app") || return 1
-  IFS=$'\t' read -r id pid x y w h owner title <<< "$row"
-  [[ -n "$x" && -n "$y" && -n "$w" && -n "$h" ]] || return 1
-  print -r -- "$x,$y,$w,$h"
+  b=$(ax_win_bounds "$app")
+  [[ "$b" =~ '^-?[0-9]+,-?[0-9]+,[0-9]+,[0-9]+$' ]] || return 1
+  print -r -- "$b"
 }
 
 activate_app() {
@@ -810,21 +813,41 @@ cmd_move()   { [[ $# -eq 2 ]] && valid_point "$1" && valid_point "$2" || die 'us
 cmd_drag()   { [[ $# -eq 4 ]] && valid_point "$1" && valid_point "$2" && valid_point "$3" && valid_point "$4" || die 'usage: cu drag X1 Y1 X2 Y2'; need_cliclick; "$CLICLICK" "m:$1,$2" "w:$CLICK_SETTLE_MS" "dd:$1,$2" "w:80" "dm:$3,$4" "w:80" "du:$3,$4"; log "drag $1,$2->$3,$4"; print -r -- "dragged $1,$2 -> $3,$4"; }
 cmd_type() {
   need_cliclick
-  local secret=0 stdin_mode=0 text=""
+  local secret=0 stdin_mode=0 paced=0 interval="${CU_TYPE_INTERVAL_MS:-180}" text=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --secret) secret=1; shift ;;
       --stdin) stdin_mode=1; shift ;;
-      *) [[ -z "$text" ]] || die "usage: cu type [--secret|--stdin] \"text\""; text="$1"; shift ;;
+      --paced) paced=1; shift ;;
+      --interval) [[ $# -ge 2 ]] || die '--interval requires milliseconds'; interval="$2"; shift 2 ;;
+      *) [[ -z "$text" ]] || die "usage: cu type [--secret|--stdin] [--paced] [--interval MS] \"text\""; text="$1"; shift ;;
     esac
   done
   if (( stdin_mode )); then
     [[ -z "$text" ]] || die "do not combine --stdin with inline text"
     text=$(<&0)
   else
-    [[ -n "$text" ]] || die "usage: cu type [--secret|--stdin] \"text\""
+    [[ -n "$text" ]] || die "usage: cu type [--secret|--stdin] [--paced] [--interval MS] \"text\""
   fi
+  (( ! paced )) || [[ "$interval" == <-> ]] || die 'type interval must be a non-negative integer'
   (( secret || stdin_mode )) && warn "typed text is not written to cu logs; prefer --stdin for secrets to avoid shell history"
+  if (( paced )); then
+    local i char total=${#text}
+    local -a paced_args
+    for (( i = 1; i <= total; i++ )); do
+      char="${text[i]}"
+      if [[ "$char" == $'\n' ]]; then
+        paced_args+=("kp:return")
+      else
+        paced_args+=("t:$char")
+      fi
+      (( i < total && interval > 0 )) && paced_args+=("w:$interval")
+    done
+    (( ${#paced_args} > 0 )) && "$CLICLICK" $paced_args
+    log "type paced ${#text} chars interval=${interval}ms"
+    if (( JSON_MODE )); then print -rn -- '{"ok":true,"typed_chars":'; print -rn -- "${#text}"; print -r -- ',"paced":true}'; else print -r -- "typed ${#text} chars (paced ${interval}ms)"; fi
+    return
+  fi
   local remaining="$text" segment
   local -a type_args
   while [[ "$remaining" == *$'\n'* ]]; do
@@ -1056,7 +1079,7 @@ ACT
   cu clicktext "App" "Save"   OCR fallback: click visible text without AX
   cu click X Y                also dclick, rclick, move
   cu drag X1 Y1 X2 Y2
-  cu type "text"              use --stdin --secret for credentials
+  cu type "text"              add --paced [--interval MS] for fragile fields
   cu paste --stdin            fast multiline paste; restores the previous clipboard
   cu key return               esc tab space arrow-up f1 delete ...
   cu combo cmd s              cu combo cmd shift 4

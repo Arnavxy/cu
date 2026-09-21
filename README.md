@@ -204,7 +204,7 @@ hover, focus, or hit-test updates. Target wheel input explicitly when the app
 contains an embedded surface such as a simulator, canvas, or remote desktop:
 
 ```bash
-cu scroll --app "Simulator" --at 640 500 down 4
+cu scroll --app "DeviceHub" --at 640 500 down 4
 ```
 
 With `--app` and no `--at`, `cu` targets the center of the front application
@@ -237,6 +237,7 @@ timings.
 | `CU_WINDOW_READY_POLL` | `0.03` | Native window readiness polling interval in seconds |
 | `CU_PASTE_READY_DELAY` | `0.02` | Clipboard propagation delay before Cmd-V |
 | `CU_PASTE_RESTORE_DELAY` | `0.35` | Delay before restoring the caller's clipboard after Cmd-V |
+| `CU_TYPE_INTERVAL_MS` | `180` | Inter-key delay used by `cu type --paced` for fragile input surfaces |
 | `CLICLICK` | discovered from `PATH` | Input backend |
 | `CU_NATIVE` | sibling `cu-native` | Native AX/CoreGraphics/Vision helper |
 | `CU_OSASCRIPT` | `/usr/bin/osascript` | Legacy bridge and test override |

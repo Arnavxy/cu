@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.3" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.4" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -81,6 +81,15 @@ CU_DIR="$TMP/state" \
   "$CU" type $'first\nsecond' >/dev/null
 assert_contains "$(cat "$multiline_log")" 't:first kp:return t:second' "multiline type emits Return keys"
 pass "multiline keyboard typing"
+
+paced_log="$TMP/paced.log"
+CU_DIR="$TMP/state" \
+  CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \
+  CU_MOCK_CLICK_LOG="$paced_log" \
+  "$CU" type --paced --interval 12 'ab' >/dev/null
+assert_contains "$(cat "$paced_log")" 't:a w:12 t:b' "paced typing emits inter-key waits"
+[[ "$(wc -l < "$paced_log" | tr -d ' ')" == 1 ]] || fail "paced typing invokes cliclick once"
+pass "paced keyboard typing"
 
 delete_log="$TMP/delete.log"
 CU_DIR="$TMP/state" \

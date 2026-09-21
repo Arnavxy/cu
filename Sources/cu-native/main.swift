@@ -79,23 +79,12 @@ func score(_ window: WindowRecord, query: String) -> Int {
     return 0
 }
 
-func focusedWindowFrame(pid: pid_t) -> CGRect? {
-    guard AXIsProcessTrusted() else { return nil }
+func axApplication(pid: pid_t) -> AXUIElement {
     let application = AXUIElementCreateApplication(pid)
-    guard let value = axValue(application, kAXFocusedWindowAttribute as CFString) else { return nil }
-    // kAXFocusedWindowAttribute is defined to return an AXUIElement.
-    let window = value as! AXUIElement
-    return axFrame(window)
-}
-
-func matchesFocusedWindow(_ candidate: WindowRecord, frame: CGRect) -> Bool {
-    let overlap = candidate.bounds.intersection(frame)
-    guard !overlap.isNull else { return false }
-    let largerArea = max(candidate.bounds.width * candidate.bounds.height, frame.width * frame.height)
-    guard largerArea > 0 else { return false }
-    // AX and CoreGraphics may differ by title-bar pixels. Requiring most of the
-    // larger rectangle rejects toolbar/utility windows nested inside the main one.
-    return (overlap.width * overlap.height) / largerArea >= 0.65
+    // Some hardened or unavailable targets can leave an AX request pending.
+    // Keep discovery bounded so a stale app name fails rather than hanging cu.
+    _ = AXUIElementSetMessagingTimeout(application, Float(0.20))
+    return application
 }
 
 func matchingWindow(_ query: String) -> WindowRecord? {
@@ -105,24 +94,10 @@ func matchingWindow(_ query: String) -> WindowRecord? {
         .filter { $0.score > 0 }
     guard !candidates.isEmpty else { return nil }
 
-    var focusedFrames: [pid_t: CGRect] = [:]
-    for candidate in candidates where focusedFrames[candidate.window.pid] == nil {
-        if let frame = focusedWindowFrame(pid: candidate.window.pid) {
-            focusedFrames[candidate.window.pid] = frame
-        }
-    }
-
     return candidates.sorted { lhs, rhs in
         if lhs.score != rhs.score { return lhs.score > rhs.score }
-        let lhsFocused = focusedFrames[lhs.window.pid].map { frame in
-            matchesFocusedWindow(lhs.window, frame: frame)
-        } ?? false
-        let rhsFocused = focusedFrames[rhs.window.pid].map { frame in
-            matchesFocusedWindow(rhs.window, frame: frame)
-        } ?? false
-        if lhsFocused != rhsFocused { return lhsFocused }
-        // CGWindowList is front-to-back, so preserve its order when neither
-        // candidate maps to the focused AX window.
+        // CGWindowList is front-to-back, so it gives a deterministic active
+        // window preference without an additional, potentially blocking AX RPC.
         return lhs.index < rhs.index
     }.first?.window
 }
@@ -210,7 +185,7 @@ func axChildren(_ element: AXUIElement) -> [AXUIElement] {
 }
 
 func axWindows(pid: pid_t) -> [AXUIElement] {
-    let application = AXUIElementCreateApplication(pid)
+    let application = axApplication(pid: pid)
     guard let value = axValue(application, kAXWindowsAttribute as CFString) else { return [] }
     return value as? [AXUIElement] ?? []
 }

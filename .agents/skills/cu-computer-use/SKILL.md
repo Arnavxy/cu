@@ -30,12 +30,12 @@ Prefer semantic actions because they are faster, more stable, and cheaper than s
 
 ## Input and scrolling
 
-- Use `cu type "text"` for short input, but verify what arrived in custom, Electron, or Simulator surfaces. If characters drop, send one character at a time with a short interval and verify the field rather than retrying a whole string blindly.
-- Use `cu paste --stdin` for fast multiline content on normal native/web fields; it restores the previous clipboard. Do not assume it reaches an iOS Simulator surface—verify the resulting field first and fall back to paced typing.
+- Use `cu type "text"` for short input, but verify what arrived in custom, Electron, or DeviceHub/iOS surfaces. If characters drop, use `cu type --paced --interval 180 "text"`; it sends one character at a time with inter-key waits in one input call. Verify the field rather than retrying a whole string blindly.
+- Use `cu paste --stdin` for fast multiline content on normal native/web fields; it restores the previous clipboard. Do not assume it reaches a DeviceHub/iOS surface—verify the resulting field first and fall back to paced typing.
 - Use `cu type --stdin --secret` for user-authorized secrets so they are not placed in command arguments or action logs.
 - Use `cu key return`, `cu combo cmd s`, pointer commands, and drag commands for ordinary input.
 - Target scrolling explicitly when possible: `cu scroll --app "App" --at X Y down 4`.
-- If an embedded surface such as iOS Simulator ignores wheel events, use `cu drag` for direct manipulation. Verify the new visible region before continuing.
+- If an embedded surface such as DeviceHub ignores wheel events, use `cu drag` for direct manipulation. Verify the new visible region before continuing.
 - If Return does not submit in a terminal, `cu combo ctrl m` is an equivalent fallback.
 
 ## Privacy and cleanup
@@ -46,6 +46,6 @@ Prefer semantic actions because they are faster, more stable, and cheaper than s
 
 Use `cu help` for the installed command reference and `cu log N` when diagnosing recent actions.
 
-## iOS Simulator
+## Device Hub / iOS Simulator
 
-Simulator is a high-value use case: `cu observe "Simulator" --all --json` can audit a running app's exposed Accessibility tree from outside the app. React Native may bridge modal/overlay controls as `AXGenericElement`, so interactive-only observation can return an empty tree even when `AXPress` still works. Use `--all` for dense Simulator overlays, count the bridged roles, and report the findings rather than inferring accessibility from pixels. Simulator often exposes hybrid/custom UI: prefer AX for inspection, but expect paste and wheel scrolling to need the fallbacks above.
+On Xcode 27, the host app is `DeviceHub`, not `Simulator`. Start with `cu apps` or `cu windows` and use the exact running app name; for example, `cu observe "DeviceHub" --all --json` audits a running app's exposed Accessibility tree from outside the app. React Native may bridge modal/overlay controls as `AXGenericElement`, so interactive-only observation can return an empty tree even when `AXPress` still works. Use `--all` for dense DeviceHub overlays, count the bridged roles, and report the findings rather than inferring accessibility from pixels. DeviceHub often exposes hybrid/custom UI: prefer AX for inspection, but expect paste and wheel scrolling to need the fallbacks above.
