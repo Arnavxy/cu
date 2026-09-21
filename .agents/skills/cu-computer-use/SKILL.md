@@ -1,6 +1,6 @@
 ---
 name: cu-computer-use
-description: Control and inspect native macOS applications with the cu CLI when a task requires visible GUI interaction, app launching, clicking, typing, scrolling, screenshots, or verified UI actions. Prefer direct APIs, browser automation, or file operations when GUI interaction is not actually required.
+description: Control and inspect native macOS applications with the local cu CLI when a task requires visible GUI interaction, app launching, clicking, typing, scrolling, screenshots, or verified UI actions. Prefer direct APIs, browser automation, or file operations when GUI interaction is not actually required.
 ---
 
 # cu computer use
@@ -9,16 +9,16 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
 
 ## Before acting
 
-- Resolve the executable with `command -v cu`. If it is missing, install it with `brew install Arnavxy/tap/cu` when installation is within the user's request; otherwise report that command.
-- Record `cu --version` before relying on a recently added feature. `command -v` proves only that a binary exists; a `~/bin` or Homebrew copy may be older than the checkout. If working in this repository, compare it with `./bin/cu --version` and use the intended binary explicitly.
+- Resolve the executable with `command -v cu`. If missing, install it with `brew install Arnavxy/tap/cu` when installation is within the user's request; otherwise report that command.
+- Record `cu --version` before relying on a recently added feature. `command -v` proves only that a binary exists; a `~/bin` or Homebrew copy may be older than the checkout. If working in the `cu` repository, compare it with `./bin/cu --version` and use the intended binary explicitly.
 - Run `cu doctor` when permissions or input behavior are uncertain. Accessibility and Screen Recording permissions may require the user to enable macOS settings.
-- Keep ordinary authorization boundaries. This skill does not authorize sending messages, publishing, purchasing, deleting data, entering secrets, or operating outside the user's requested scope.
+- Keep ordinary authorization boundaries. The existence of this skill does not authorize sending messages, publishing, purchasing, deleting data, entering secrets, or operating outside the user's requested scope.
 
 ## Efficient interaction loop
 
 1. Activate an existing app with `cu open "App"` when needed.
-2. Start with `cu observe "App" --json`. Filter the JSON locally to relevant names and roles instead of returning a large accessibility tree to the model.
-3. Prefer a unique semantic element and immediately call `cu act e_N --snapshot s_ID --json`. Handles are snapshot-scoped; re-observe after meaningful UI changes.
+2. Start with `cu observe "App" --json`. Filter the JSON locally to the relevant names and roles instead of returning a large accessibility tree to the model.
+3. Prefer a unique semantic element and immediately call `cu act e_N --snapshot s_ID --json`. Treat handles as snapshot-scoped; re-observe after meaningful UI changes.
 4. Check the returned verification object, then observe the expected state or target text. Do not assume a reported click means the intended outcome occurred. For a known dialog/window transition, prefer `cu wait --window APP TITLE [--gone] [--timeout MS]` over a guessed sleep.
 5. Escalate only as needed:
    - `cu tree "App" FILTER` or `cu clickel "App" "Name" --role ROLE`
