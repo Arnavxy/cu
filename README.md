@@ -101,7 +101,7 @@ call site, and still works when System Events reports no application windows.
 | Observe | Native `AXUIElement` traversal with role, accessible name, bounds, actions, and compact element IDs |
 | Act | Snapshot-scoped semantic actions such as `AXPress`, with OCR click fallback |
 | Guard | PID, window, element path, role, name, bounds, and snapshot-age validation before input |
-| Verify | Automatic post-action window and pixel-fingerprint comparison |
+| Verify | Post-action state reporting with animation detection and coordinate fallback |
 | Find windows | CoreGraphics discovery for apps hidden from AppleScript/System Events |
 | Read visible text | On-device Vision OCR, limited to the target window whenever possible |
 | Input | Click, double-click, right-click, drag, keys, shortcuts, multiline typing, clipboard-safe paste, and real wheel scrolling |
@@ -277,7 +277,7 @@ Current limitations:
 - Canvas, game, remote-desktop, and heavily custom UIs may require OCR or raw input.
 - Some embedded or touch-style surfaces ignore wheel events and require a drag gesture.
 - macOS prevents automation of secure input and other protected system surfaces.
-- Pixel verification establishes that the visible window changed, not that the user's high-level goal succeeded.
+- Pixel verification establishes that the visible window changed, not that the user's high-level goal succeeded. `AXPress` means the Accessibility request was accepted; on a stable surface, `cu act` can use a fresh coordinate fallback when no visible effect is detected. On an already-animated surface it reports `visual_activity: animated` and leaves `changed` indeterminate rather than claiming proof.
 - Native AX and Screen Recording still require explicit macOS privacy permissions.
 
 ## License

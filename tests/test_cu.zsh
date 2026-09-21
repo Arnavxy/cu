@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.5" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.6" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -224,11 +224,27 @@ runtime_action=$(
   CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
   CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" \
   CU_SIPS="$ROOT/tests/fixtures/mock-sips" \
+  CU_AX_COORDINATE_FALLBACK=0 \
   "$CU" act e_1 --snapshot "$snapshot" --json
 )
 assert_contains "$runtime_action" '"action":"AXPress"' "act uses native AX action"
 assert_contains "$runtime_action" '"verification":{"available":true,"changed":false' "act automatically verifies"
 pass "observe/act runtime"
+
+fallback_log="$TMP/fallback.log"
+fallback_action=$( \
+  CU_DIR="$TMP/runtime-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" \
+  CU_SIPS="$ROOT/tests/fixtures/mock-sips" \
+  CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \
+  CU_MOCK_CLICK_LOG="$fallback_log" \
+  "$CU" act e_1 --snapshot "$snapshot" --json
+)
+assert_contains "$fallback_action" '"action":"AXPress+CoordinateClick"' "AX no-op uses coordinate fallback"
+assert_contains "$fallback_action" '"coordinate_fallback":"used"' "fallback is reported"
+assert_contains "$(cat "$fallback_log")" 'c:150,250' "fallback clicks the fresh element center"
+pass "AX coordinate fallback"
 
 no_verify_action=$( \
   CU_DIR="$TMP/runtime-state" \

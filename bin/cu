@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.2.5"
+CU_VERSION="0.2.6"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -742,8 +742,16 @@ cmd_act() {
   sleep 0.05
   local dx=$((bx - wx)) dy=$((by - wy))
   local expected_x=$((ex + dx)) expected_y=$((ey + dy))
-  local before="" after="" verification_available=false
-  if (( verify )); then before=$(_window_fingerprint "$app" 2>/dev/null) || before=""; fi
+  local before="" baseline="" after="" verification_available=false
+  local visual_activity="unknown" coordinate_fallback="none"
+  if (( verify )); then
+    before=$(_window_fingerprint "$app" 2>/dev/null) || before=""
+    sleep 0.05
+    baseline=$(_window_fingerprint "$app" 2>/dev/null) || baseline=""
+    if [[ -n "$before" && -n "$baseline" ]]; then
+      if [[ "$before" == "$baseline" ]]; then visual_activity="stable"; else visual_activity="animated"; fi
+    fi
+  fi
 
   local action_result
   if [[ "$source" == native_ax ]]; then
@@ -775,10 +783,23 @@ cmd_act() {
       IFS=$'\t' read -r after_id after_pid bx by bw bh owner current_title <<< "$after_row"
       if [[ "$after_id" != "$window_id" ]]; then
         window_state="changed"; changed=true; verification_available=true
+      elif [[ "$visual_activity" == animated ]]; then
+        verification_available=true
+        changed=null
       else
         after=$(_window_fingerprint "$app" 2>/dev/null) || after=""
         if [[ -n "$before" && -n "$after" ]]; then
           verification_available=true
+          [[ "$before" == "$after" ]] && changed=false || changed=true
+        fi
+      fi
+      if [[ "$changed" == false && "$source" == native_ax && "$action_result" == AXPress && "${CU_AX_COORDINATE_FALLBACK:-1}" == 1 && -x "$CLICLICK" ]]; then
+        _settled_click "$((expected_x + ew / 2))" "$((expected_y + eh / 2))" c >/dev/null
+        coordinate_fallback="used"
+        action_result="AXPress+CoordinateClick"
+        sleep "${CU_VERIFY_DELAY:-0.20}"
+        after=$(_window_fingerprint "$app" 2>/dev/null) || after=""
+        if [[ -n "$before" && -n "$after" ]]; then
           [[ "$before" == "$after" ]] && changed=false || changed=true
         fi
       fi
@@ -791,9 +812,10 @@ cmd_act() {
     print -rn -- '{"ok":true,"snapshot":'; json_string "$snapshot"; print -rn -- ',"element":'; json_string "$element_id"
     print -rn -- ',"action":'; json_string "$action_result"; print -rn -- ',"source":'; json_string "$source"
     print -rn -- ',"verification":{"available":'; print -rn -- "$verification_available"
-    print -rn -- ',"changed":'; print -rn -- "$changed"; print -rn -- ',"window_state":'; json_string "$window_state"; print -r -- '}}'
+    print -rn -- ',"changed":'; print -rn -- "$changed"; print -rn -- ',"window_state":'; json_string "$window_state"
+    print -rn -- ',"visual_activity":'; json_string "$visual_activity"; print -rn -- ',"coordinate_fallback":'; json_string "$coordinate_fallback"; print -r -- '}}'
   else
-    print -r -- "acted on $element_id via $action_result; verification changed=$changed window=$window_state"
+    print -r -- "acted on $element_id via $action_result; verification changed=$changed activity=$visual_activity fallback=$coordinate_fallback window=$window_state"
   fi
   log "act snapshot=$snapshot element=$element_id action=$action_result changed=$changed window=$window_state"
 }

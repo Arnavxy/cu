@@ -20,6 +20,7 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
 2. Start with `cu observe "App" --json`. Filter the JSON locally to the relevant names and roles instead of returning a large accessibility tree to the model.
 3. Prefer a unique semantic element and immediately call `cu act e_N --snapshot s_ID --json`. Treat handles as snapshot-scoped; re-observe after meaningful UI changes.
 4. Check the returned verification object, then observe the expected state or target text. Do not assume a reported click means the intended outcome occurred. For a known dialog/window transition, prefer `cu wait --window APP TITLE [--gone] [--timeout MS]` over a guessed sleep.
+   `AXPress` means the Accessibility request was accepted, not necessarily that an app handler ran. On stable surfaces, `cu act` may report `coordinate_fallback: used` when it has to retry at the target's fresh center. Treat `visual_activity: animated` with `changed: null` as indeterminate and re-observe the expected state.
 5. Escalate only as needed:
    - `cu tree "App" FILTER` or `cu clickel "App" "Name" --role ROLE`
    - `cu clicktext "App" "Visible text"` for local OCR fallback
