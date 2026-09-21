@@ -1,0 +1,6 @@
+interface:
+  display_name: "cu Computer Use"
+  short_description: "Fast native macOS control with verification"
+  default_prompt: "Use $cu-computer-use to operate this Mac through the visible interface and verify the result."
+policy:
+  allow_implicit_invocation: true

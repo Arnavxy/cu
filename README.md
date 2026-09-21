@@ -40,6 +40,28 @@ cu act "$target" --snapshot "$snapshot" --json
 }
 ```
 
+## Agent skill
+
+This repository ships an auto-discoverable Agent Skill at
+`.agents/skills/cu-computer-use`. Codex can invoke `$cu-computer-use`
+explicitly or select it automatically when a task requires native macOS GUI
+interaction. The skill teaches agents to use the token-efficient semantic path
+first, verify consequential actions, and fall back to OCR or screenshots only
+when necessary.
+
+Codex discovers the skill automatically while working inside this repository.
+To install it globally from a clone:
+
+```bash
+mkdir -p "$HOME/.agents/skills"
+cp -R .agents/skills/cu-computer-use "$HOME/.agents/skills/"
+```
+
+Alternatively, ask an agent with the skill installer to install
+`cu-computer-use` from
+`https://github.com/Arnavxy/cu/tree/main/.agents/skills/cu-computer-use`.
+Restart an existing agent session if it does not detect the new skill.
+
 ## What cu is
 
 `cu` is a local command-line runtime for computer-use agents and desktop

@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+### Added
+
+- A portable `cu-computer-use` Agent Skill with automatic invocation metadata,
+  an efficient observe-act-verify workflow, fallback guidance, and privacy
+  boundaries.
+- README instructions for repository-scoped and global skill discovery.
+
 ## 0.2.1 - 2026-09-21
 
 ### Changed
