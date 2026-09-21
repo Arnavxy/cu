@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.2.1"
+CU_VERSION="0.2.2"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -66,6 +66,22 @@ OSA
 native_window() {
   native_available || return 1
   "$NATIVE" bounds "$1" 2>/dev/null
+}
+
+# Activate eagerly, but wait only when a target app has not published a usable
+# CoreGraphics window yet. Foreground apps therefore avoid the old fixed 150 ms
+# observation penalty, while cold app launches retain a bounded readiness wait.
+native_window_ready() {
+  local app="$1" max_wait="${CU_WINDOW_READY_DELAY:-0.15}" poll="${CU_WINDOW_READY_POLL:-0.03}" row started now
+  zmodload zsh/datetime 2>/dev/null || true
+  started="${EPOCHREALTIME:-0}"
+  while true; do
+    row=$(native_window "$app") && { print -r -- "$row"; return 0; }
+    [[ "$started" != 0 && -n "${EPOCHREALTIME:-}" ]] || return 1
+    now="$EPOCHREALTIME"
+    (( now - started < max_wait )) || return 1
+    sleep "$poll"
+  done
 }
 
 win_bounds() {
@@ -606,13 +622,22 @@ cmd_observe() {
   done
   native_available || die "native helper is required (run scripts/build-native.zsh)"
   activate_app "$app" || true
-  sleep 0.15
   local window_row window_id pid wx wy ww wh app_name title
-  window_row=$(native_window "$app") || die "no visible window matched '$app'"
-  IFS=$'\t' read -r window_id pid wx wy ww wh app_name title <<< "$window_row"
-  local info bundle=""
-  info=$("$NATIVE" app-info "$app" 2>/dev/null) || true
-  if [[ -n "$info" ]]; then local ipid iname; IFS=$'\t' read -r ipid iname bundle <<< "$info"; fi
+  local info bundle="" context context_meta
+  if (( all )); then
+    context=$("$NATIVE" context "$app" 2>/dev/null) || context=""
+  else
+    context=$("$NATIVE" context "$app" --interactive 2>/dev/null) || context=""
+  fi
+  context_meta="${context%%$'\n'*}"
+  if [[ "$context_meta" == META$'\t'* ]]; then
+    IFS=$'\t' read -r _ window_id pid wx wy ww wh app_name title bundle <<< "$context_meta"
+  else
+    window_row=$(native_window_ready "$app") || die "no visible window matched '$app'"
+    IFS=$'\t' read -r window_id pid wx wy ww wh app_name title <<< "$window_row"
+    info=$("$NATIVE" app-info "$app" 2>/dev/null) || true
+    if [[ -n "$info" ]]; then local ipid iname; IFS=$'\t' read -r ipid iname bundle <<< "$info"; fi
+  fi
 
   local snapshot="s_$(date +%s)_${RANDOM}" created="$(date +%s)"
   local tmp="$SNAPSHOTS/$snapshot.tmp" file="$SNAPSHOTS/$snapshot.tsv"
@@ -621,7 +646,9 @@ cmd_observe() {
     "$snapshot" "$created" "$app_name" "$pid" "$window_id" "$wx" "$wy" "$ww" "$wh" "$bundle" "$title" > "$tmp"
 
   local source ax_output ocr_output line element_path role name ex ey ew eh actions confidence id count=0
-  if (( all )); then
+  if [[ "$context_meta" == META$'\t'* ]]; then
+    ax_output=$(print -r -- "$context" | awk -F '\t' '$1 == "AX" { $1=""; sub(/^\t/, ""); print }')
+  elif (( all )); then
     ax_output=$("$NATIVE" ax-tree "$app" 2>/dev/null) || ax_output=""
   else
     ax_output=$("$NATIVE" ax-tree "$app" --interactive 2>/dev/null) || ax_output=""

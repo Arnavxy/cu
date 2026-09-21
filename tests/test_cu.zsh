@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.1" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.2" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -146,9 +146,11 @@ assert_contains "$display_click" 'PRESSED (OCRClick)' "display OCR reports click
 assert_contains "$(cat "$display_click_log")" 'c:50,15' "display OCR can click app menu text"
 pass "display OCR menu fallback"
 
+observe_log="$TMP/observe-native.log"
 observation=$(
   CU_DIR="$TMP/runtime-state" \
   CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_MOCK_NATIVE_LOG="$observe_log" \
   CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" \
   CU_SIPS="$ROOT/tests/fixtures/mock-sips" \
   "$CU" observe Demo --json
@@ -156,6 +158,7 @@ observation=$(
 assert_contains "$observation" '"snapshot":"s_' "observe returns snapshot ID"
 assert_contains "$observation" '"source":"native_ax"' "observe uses native AX"
 assert_contains "$observation" '"id":"e_1"' "observe returns stable element handles"
+assert_contains "$(cat "$observe_log")" 'context Demo --interactive' "observe fetches window and AX data in one native call"
 snapshot=$(print -r -- "$observation" | sed -n 's/.*"snapshot":"\([^"]*\)".*/\1/p')
 runtime_action=$(
   CU_DIR="$TMP/runtime-state" \

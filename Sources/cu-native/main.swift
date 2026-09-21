@@ -79,17 +79,52 @@ func score(_ window: WindowRecord, query: String) -> Int {
     return 0
 }
 
+func focusedWindowFrame(pid: pid_t) -> CGRect? {
+    guard AXIsProcessTrusted() else { return nil }
+    let application = AXUIElementCreateApplication(pid)
+    guard let value = axValue(application, kAXFocusedWindowAttribute as CFString) else { return nil }
+    // kAXFocusedWindowAttribute is defined to return an AXUIElement.
+    let window = value as! AXUIElement
+    return axFrame(window)
+}
+
+func matchesFocusedWindow(_ candidate: WindowRecord, frame: CGRect) -> Bool {
+    let overlap = candidate.bounds.intersection(frame)
+    guard !overlap.isNull else { return false }
+    let largerArea = max(candidate.bounds.width * candidate.bounds.height, frame.width * frame.height)
+    guard largerArea > 0 else { return false }
+    // AX and CoreGraphics may differ by title-bar pixels. Requiring most of the
+    // larger rectangle rejects toolbar/utility windows nested inside the main one.
+    return (overlap.width * overlap.height) / largerArea >= 0.65
+}
+
 func matchingWindow(_ query: String) -> WindowRecord? {
-    allWindows()
+    let candidates = allWindows()
         .enumerated()
         .map { (index: $0.offset, window: $0.element, score: score($0.element, query: query)) }
         .filter { $0.score > 0 }
-        .sorted {
-            if $0.score != $1.score { return $0.score > $1.score }
-            // CGWindowList is front-to-back, so preserve its order for equal matches.
-            return $0.index < $1.index
+    guard !candidates.isEmpty else { return nil }
+
+    var focusedFrames: [pid_t: CGRect] = [:]
+    for candidate in candidates where focusedFrames[candidate.window.pid] == nil {
+        if let frame = focusedWindowFrame(pid: candidate.window.pid) {
+            focusedFrames[candidate.window.pid] = frame
         }
-        .first?.window
+    }
+
+    return candidates.sorted { lhs, rhs in
+        if lhs.score != rhs.score { return lhs.score > rhs.score }
+        let lhsFocused = focusedFrames[lhs.window.pid].map { frame in
+            matchesFocusedWindow(lhs.window, frame: frame)
+        } ?? false
+        let rhsFocused = focusedFrames[rhs.window.pid].map { frame in
+            matchesFocusedWindow(rhs.window, frame: frame)
+        } ?? false
+        if lhsFocused != rhsFocused { return lhsFocused }
+        // CGWindowList is front-to-back, so preserve its order when neither
+        // candidate maps to the focused AX window.
+        return lhs.index < rhs.index
+    }.first?.window
 }
 
 func printWindow(_ window: WindowRecord) {
@@ -341,6 +376,11 @@ func imageFingerprint(path: String) throws -> String {
     return String(format: "%016llx", hash)
 }
 
+func positiveDelay(_ key: String, default value: TimeInterval) -> TimeInterval {
+    guard let raw = ProcessInfo.processInfo.environment[key], let delay = TimeInterval(raw), delay >= 0 else { return value }
+    return delay
+}
+
 func pasteText(path: String) throws {
     let text = try String(contentsOfFile: path, encoding: .utf8)
     let pasteboard = NSPasteboard.general
@@ -352,17 +392,27 @@ func pasteText(path: String) throws {
         return values
     }
     pasteboard.clearContents()
-    pasteboard.setString(text, forType: .string)
+    guard pasteboard.setString(text, forType: .string) else {
+        throw NSError(domain: "cu-native", code: 8, userInfo: [NSLocalizedDescriptionKey: "could not write text to the clipboard"])
+    }
+    // Give pasteboard consumers a chance to observe the new change count before
+    // posting Cmd-V. This is especially important for Chromium/Electron targets.
+    Thread.sleep(forTimeInterval: positiveDelay("CU_PASTE_READY_DELAY", default: 0.02))
 
     guard
-        let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
-        let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false)
+        let source = CGEventSource(stateID: .hidSystemState),
+        let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+        let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
     else {
-        throw NSError(domain: "cu-native", code: 8, userInfo: [NSLocalizedDescriptionKey: "could not create paste events"])
+        throw NSError(domain: "cu-native", code: 9, userInfo: [NSLocalizedDescriptionKey: "could not create paste events"])
     }
     down.flags = .maskCommand; up.flags = .maskCommand
     down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
-    Thread.sleep(forTimeInterval: 0.20)
+    // Apps may resolve the pasteboard lazily after receiving Cmd-V. Keep the
+    // agent's clipboard payload alive long enough for those consumers, then
+    // restore the caller's original clipboard. The delay is configurable for
+    // unusually slow remote or web surfaces.
+    Thread.sleep(forTimeInterval: positiveDelay("CU_PASTE_RESTORE_DELAY", default: 0.35))
 
     pasteboard.clearContents()
     if !backup.isEmpty {
@@ -408,7 +458,7 @@ func scrollWheel(at point: CGPoint, delta: Int32, count: Int) throws {
 }
 
 func usage() -> Never {
-    fputs("usage: cu-native windows [app] | bounds APP | display APP | activate APP | app-info APP | ocr IMAGE X Y | fingerprint IMAGE | paste FILE | scroll X Y DELTA COUNT | ax-status | ax-tree APP | ax-perform PID PATH ROLE NAME X Y W H\n", stderr)
+    fputs("usage: cu-native windows [app] | bounds APP | display APP | activate APP | app-info APP | context APP [--interactive] | ocr IMAGE X Y | fingerprint IMAGE | paste FILE | scroll X Y DELTA COUNT | ax-status | ax-tree APP | ax-perform PID PATH ROLE NAME X Y W H\n", stderr)
     exit(64)
 }
 
@@ -453,6 +503,19 @@ case "app-info":
     guard args.count == 2, let window = matchingWindow(args[1]) else { usage() }
     let running = NSRunningApplication(processIdentifier: window.pid)
     print("\(window.pid)\t\(clean(window.app))\t\(clean(running?.bundleIdentifier ?? ""))")
+
+case "context":
+    guard (args.count == 2 || args.count == 3), let window = matchingWindow(args[1]) else { usage() }
+    let interactiveOnly = args.count == 3 && args[2] == "--interactive"
+    guard args.count == 2 || interactiveOnly else { usage() }
+    let running = NSRunningApplication(processIdentifier: window.pid)
+    let b = window.bounds.integral
+    print("META\t\(window.id)\t\(window.pid)\t\(Int(b.origin.x))\t\(Int(b.origin.y))\t\(Int(b.width))\t\(Int(b.height))\t\(clean(window.app))\t\(clean(window.title))\t\(clean(running?.bundleIdentifier ?? ""))")
+    guard AXIsProcessTrusted() else { exit(0) }
+    for record in axRecords(pid: window.pid, interactiveOnly: interactiveOnly) {
+        let f = record.frame.integral
+        print("AX\t\(record.path)\t\(record.role)\t\(clean(record.name))\t\(Int(f.origin.x))\t\(Int(f.origin.y))\t\(Int(f.width))\t\(Int(f.height))\t\(record.actions.joined(separator: ","))")
+    }
 
 case "ocr":
     guard args.count == 4, let x = Double(args[2]), let y = Double(args[3]) else { usage() }

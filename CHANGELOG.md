@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## 0.2.2 - 2026-09-21
 
 ### Added
 
@@ -10,6 +10,15 @@ All notable changes to this project are documented here.
   an efficient observe-act-verify workflow, fallback guidance, and privacy
   boundaries.
 - README instructions for repository-scoped and global skill discovery.
+
+### Changed
+
+- `observe` now uses one native context call for window identity and AX traversal,
+  avoiding redundant native process launches on the semantic fast path.
+- Window matching now favors the Accessibility-focused window over same-app
+  utility chrome, improving target accuracy for multi-window applications.
+- Clipboard paste now waits for pasteboard propagation and gives delayed
+  clipboard consumers a configurable handoff window before restoration.
 
 ## 0.2.1 - 2026-09-21
 

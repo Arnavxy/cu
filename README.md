@@ -214,6 +214,7 @@ to perform the same direct manipulation a user would.
 ## Performance model
 
 - Interactive-only native traversal is the default to minimize latency and JSON size.
+- `observe` obtains the focused window, identity, and Accessibility tree in one native call; it waits only when a newly activated app has not published a window yet.
 - OCR runs locally and only as a fallback.
 - Captures are scoped to the target window when possible.
 - Verification uses a downsampled pixel fingerprint rather than returning another image.
@@ -232,6 +233,10 @@ timings.
 | `CU_SNAPSHOT_TTL` | `120` | Maximum actionable snapshot age in seconds |
 | `CU_VERIFY_DELAY` | `0.20` | UI settling delay before verification |
 | `CU_CLICK_SETTLE_MS` | `35` | Delay between pointer movement and coordinate click |
+| `CU_WINDOW_READY_DELAY` | `0.15` | Maximum seconds to wait for a newly activated app window |
+| `CU_WINDOW_READY_POLL` | `0.03` | Native window readiness polling interval in seconds |
+| `CU_PASTE_READY_DELAY` | `0.02` | Clipboard propagation delay before Cmd-V |
+| `CU_PASTE_RESTORE_DELAY` | `0.35` | Delay before restoring the caller's clipboard after Cmd-V |
 | `CLICLICK` | discovered from `PATH` | Input backend |
 | `CU_NATIVE` | sibling `cu-native` | Native AX/CoreGraphics/Vision helper |
 | `CU_OSASCRIPT` | `/usr/bin/osascript` | Legacy bridge and test override |
