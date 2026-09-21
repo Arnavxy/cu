@@ -11,6 +11,18 @@ JSON, acts on snapshot-scoped handles, and verifies the result. It gives an
 agent reliable “eyes and hands” without requiring a full screenshot for every
 step.
 
+## Install with Homebrew
+
+```bash
+brew install Arnavxy/tap/cu
+cu doctor
+```
+
+Requires macOS 13 Ventura or newer. Grant Accessibility to the terminal or
+agent running `cu`; screenshot and OCR commands also require Screen Recording.
+
+## Quick start
+
 ```bash
 observation="$(cu observe "Xcode" --json)"
 snapshot="$(jq -r '.snapshot' <<< "$observation")"
@@ -77,15 +89,7 @@ call site, and still works when System Events reports no application windows.
 By default, `observe` returns interactive controls only. `--all` includes the
 surrounding labels and other named elements when the agent needs more context.
 
-## Install
-
-Install the latest stable release with Homebrew:
-
-```bash
-brew install Arnavxy/tap/cu
-```
-
-Or build directly from source:
+## Build from source
 
 ### Requirements
 
