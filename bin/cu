@@ -796,16 +796,18 @@ cmd_act() {
 }
 
 _settled_click() {
-  local x="$1" y="$2" action="${3:-c}"
+  local x="${1:-}" y="${2:-}" action="${3:-c}"
+  valid_point "$x" && valid_point "$y" || die 'coordinates must be numeric logical points'
   need_cliclick
   [[ "$CLICK_SETTLE_MS" == <-> ]] || die "CU_CLICK_SETTLE_MS must be a non-negative integer"
   "$CLICLICK" "m:$x,$y" "w:$CLICK_SETTLE_MS" "$action:$x,$y"
 }
-cmd_click()  { _settled_click "$1" "$2" c;  log "click $1,$2"; print -r -- "clicked $1,$2"; }
-cmd_dclick() { _settled_click "$1" "$2" dc; log "dclick $1,$2"; print -r -- "double-clicked $1,$2"; }
-cmd_rclick() { _settled_click "$1" "$2" rc; log "rclick $1,$2"; print -r -- "right-clicked $1,$2"; }
-cmd_move()   { need_cliclick; "$CLICLICK" "m:$1,$2";  log "move $1,$2"; print -r -- "moved to $1,$2"; }
-cmd_drag()   { need_cliclick; "$CLICLICK" "m:$1,$2" "w:$CLICK_SETTLE_MS" "dd:$1,$2" "w:80" "dm:$3,$4" "w:80" "du:$3,$4"; log "drag $1,$2->$3,$4"; print -r -- "dragged $1,$2 -> $3,$4"; }
+cmd_click()  { [[ $# -eq 2 ]] || die 'usage: cu click X Y'; _settled_click "$1" "$2" c;  log "click $1,$2"; print -r -- "clicked $1,$2"; }
+cmd_dclick() { [[ $# -eq 2 ]] || die 'usage: cu dclick X Y'; _settled_click "$1" "$2" dc; log "dclick $1,$2"; print -r -- "double-clicked $1,$2"; }
+cmd_rclick() { [[ $# -eq 2 ]] || die 'usage: cu rclick X Y'; _settled_click "$1" "$2" rc; log "rclick $1,$2"; print -r -- "right-clicked $1,$2"; }
+valid_point() { [[ "$1" =~ '^-?[0-9]+([.][0-9]+)?$' ]]; }
+cmd_move()   { [[ $# -eq 2 ]] && valid_point "$1" && valid_point "$2" || die 'usage: cu move X Y'; need_cliclick; "$CLICLICK" "m:$1,$2";  log "move $1,$2"; print -r -- "moved to $1,$2"; }
+cmd_drag()   { [[ $# -eq 4 ]] && valid_point "$1" && valid_point "$2" && valid_point "$3" && valid_point "$4" || die 'usage: cu drag X1 Y1 X2 Y2'; need_cliclick; "$CLICLICK" "m:$1,$2" "w:$CLICK_SETTLE_MS" "dd:$1,$2" "w:80" "dm:$3,$4" "w:80" "du:$3,$4"; log "drag $1,$2->$3,$4"; print -r -- "dragged $1,$2 -> $3,$4"; }
 cmd_type() {
   need_cliclick
   local secret=0 stdin_mode=0 text=""
@@ -864,7 +866,7 @@ cmd_key() {
   "$CLICLICK" "kp:$key"; log "key $1"; print -r -- "pressed $1"
 }
 cmd_pos()    { need_cliclick; "$CLICLICK" p; }
-cmd_color()  { need_cliclick; "$CLICLICK" "cp:$1,$2"; }
+cmd_color()  { [[ $# -eq 2 ]] && valid_point "$1" && valid_point "$2" || die 'usage: cu color X Y'; need_cliclick; "$CLICLICK" "cp:$1,$2"; }
 cmd_wait() {
   if [[ "${1:-}" != "--window" ]]; then
     [[ $# -eq 1 && "$1" =~ '^[0-9]+$' ]] || die 'usage: cu wait MS | cu wait --window APP TITLE [--gone] [--timeout MS]'

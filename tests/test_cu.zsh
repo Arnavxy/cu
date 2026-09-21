@@ -100,6 +100,12 @@ fi
 assert_contains "$bad_combo" 'usage: cu combo MODIFIER... KEY' "combo reports a useful missing-key error"
 pass "keyboard argument validation"
 
+if bad_click=$(CU_DIR="$TMP/state" "$CU" --json click nope 20 2>&1); then
+  fail "non-numeric click coordinates are rejected"
+fi
+assert_contains "$bad_click" 'coordinates must be numeric logical points' "click validates coordinates before input"
+pass "coordinate argument validation"
+
 pointer_log="$TMP/pointer.log"
 CU_DIR="$TMP/state" \
   CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \
