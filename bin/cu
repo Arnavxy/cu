@@ -857,7 +857,12 @@ cliclick_key() {
     *) print -r -- "$1" ;;
   esac
 }
-cmd_key()    { need_cliclick; local key; key=$(cliclick_key "$1"); "$CLICLICK" "kp:$key"; log "key $1"; print -r -- "pressed $1"; }
+cmd_key() {
+  [[ $# -eq 1 && -n "$1" ]] || die 'usage: cu key KEY'
+  need_cliclick
+  local key; key=$(cliclick_key "$1")
+  "$CLICLICK" "kp:$key"; log "key $1"; print -r -- "pressed $1"
+}
 cmd_pos()    { need_cliclick; "$CLICLICK" p; }
 cmd_color()  { need_cliclick; "$CLICLICK" "cp:$1,$2"; }
 cmd_wait() {
@@ -1067,6 +1072,7 @@ U
 }
 
 cmd_combo() {
+  [[ $# -ge 2 ]] || die 'usage: cu combo MODIFIER... KEY'
   need_cliclick
   local -a mods; local last
   mods=("${@[1,-2]}"); last="${@[-1]}"

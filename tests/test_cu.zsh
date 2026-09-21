@@ -90,6 +90,16 @@ CU_DIR="$TMP/state" \
 assert_contains "$(cat "$delete_log")" 'kd:cmd kp:delete ku:cmd' "backspace shortcut maps to cliclick delete"
 pass "backspace key compatibility"
 
+if bad_key=$(CU_DIR="$TMP/state" "$CU" --json key 2>&1); then
+  fail "key without an argument is rejected"
+fi
+assert_contains "$bad_key" 'usage: cu key KEY' "key reports a useful missing-argument error"
+if bad_combo=$(CU_DIR="$TMP/state" "$CU" --json combo cmd 2>&1); then
+  fail "combo without a key is rejected"
+fi
+assert_contains "$bad_combo" 'usage: cu combo MODIFIER... KEY' "combo reports a useful missing-key error"
+pass "keyboard argument validation"
+
 pointer_log="$TMP/pointer.log"
 CU_DIR="$TMP/state" \
   CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \
