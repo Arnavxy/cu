@@ -79,6 +79,14 @@ surrounding labels and other named elements when the agent needs more context.
 
 ## Install
 
+Install the latest stable release with Homebrew:
+
+```bash
+brew install Arnavxy/tap/cu
+```
+
+Or build directly from source:
+
 ### Requirements
 
 - macOS 13 Ventura or newer
