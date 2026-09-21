@@ -765,9 +765,9 @@ cmd_act() {
     runtime_fail invalid_snapshot "unsupported element source '$source'"; return 1
   fi
 
-  sleep "${CU_VERIFY_DELAY:-0.20}"
   local window_state="same" changed="null" after_row after_id after_pid
   if (( verify )); then
+    sleep "${CU_VERIFY_DELAY:-0.20}"
     if after_row=$(native_window "$app" 2>/dev/null); then
       IFS=$'\t' read -r after_id after_pid bx by bw bh owner current_title <<< "$after_row"
       if [[ "$after_id" != "$window_id" ]]; then
@@ -860,7 +860,40 @@ cliclick_key() {
 cmd_key()    { need_cliclick; local key; key=$(cliclick_key "$1"); "$CLICLICK" "kp:$key"; log "key $1"; print -r -- "pressed $1"; }
 cmd_pos()    { need_cliclick; "$CLICLICK" p; }
 cmd_color()  { need_cliclick; "$CLICLICK" "cp:$1,$2"; }
-cmd_wait()   { need_cliclick; "$CLICLICK" "w:$1"; }
+cmd_wait() {
+  if [[ "${1:-}" != "--window" ]]; then
+    [[ $# -eq 1 && "$1" =~ '^[0-9]+$' ]] || die 'usage: cu wait MS | cu wait --window APP TITLE [--gone] [--timeout MS]'
+    need_cliclick; "$CLICLICK" "w:$1"; return
+  fi
+  [[ $# -ge 3 ]] || die 'usage: cu wait --window APP TITLE [--gone] [--timeout MS]'
+  local app="$2" title="$3" gone=0 timeout_ms="${CU_WAIT_TIMEOUT_MS:-2000}"; shift 3
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --gone) gone=1; shift ;;
+      --timeout) [[ $# -ge 2 ]] || die '--timeout requires milliseconds'; timeout_ms="$2"; shift 2 ;;
+      *) die "unknown wait option '$1'" ;;
+    esac
+  done
+  [[ "$timeout_ms" =~ '^[0-9]+$' ]] || die 'wait timeout must be milliseconds'
+  native_available || die 'native helper is required for condition waits'
+  zmodload zsh/datetime 2>/dev/null || die 'high-resolution clock is unavailable'
+  local started="$EPOCHREALTIME" now found
+  while true; do
+    found=0
+    "$NATIVE" windows "$app" 2>/dev/null | awk -F $'\t' -v wanted="$title" '$8 == wanted { found=1 } END { exit !found }' && found=1
+    if (( (gone && ! found) || (! gone && found) )); then
+      if (( gone )); then
+        print -r -- "window gone: $app — $title"
+      else
+        print -r -- "window ready: $app — $title"
+      fi
+      return
+    fi
+    now="$EPOCHREALTIME"
+    (( (now - started) * 1000 < timeout_ms )) || die "timed out waiting for window '$title' in '$app'"
+    sleep 0.03
+  done
+}
 
 # Real wheel scrolling for up/down via CoreGraphics. top/bottom remain focus-based
 # keyboard commands because there is no portable wheel equivalent for those actions.
@@ -934,6 +967,11 @@ cmd_open() {
   log "activate $1"; print -r -- "activated $1"
 }
 cmd_bounds() { win_bounds "$1" || die "no window for $1"; }
+cmd_windows() {
+  native_available || die "native helper is required (run scripts/build-native.zsh)"
+  [[ $# -le 1 ]] || die 'usage: cu windows ["App"]'
+  "$NATIVE" windows "$@"
+}
 
 cmd_clean() {
   local n; n=$(find "$SHOTS" -name '*.png' 2>/dev/null | wc -l | tr -d ' ')
@@ -1012,10 +1050,12 @@ ACT
   cu key return               esc tab space arrow-up f1 delete ...
   cu combo cmd s              cu combo cmd shift 4
   cu scroll [--app "App"] [--at X Y] down|up|top|bottom [n]
-  cu wait MS
+  cu wait MS                  bounded delay
+  cu wait --window APP TITLE [--gone] [--timeout MS]
+                              wait for a real window state, not a guess
 
 CONTEXT
-  cu apps / cu open "Safari" / cu bounds "Safari"
+  cu apps / cu windows ["Safari"] / cu open "Safari" / cu bounds "Safari"
 
 UPKEEP
   cu doctor                   permissions + disk usage
@@ -1056,6 +1096,7 @@ case "$sub" in
   color) cmd_color "$@" ;;      wait) cmd_wait "$@" ;;
   diff) cmd_diff "$@" ;;        apps) cmd_apps ;;
   open) cmd_open "$@" ;;        bounds) cmd_bounds "$@" ;;
+  windows) cmd_windows "$@" ;;
   doctor) cmd_doctor ;;         clean) cmd_clean ;;
   log) cmd_log "$@" ;;
   -v|--version|version) print -r -- "cu $CU_VERSION" ;;

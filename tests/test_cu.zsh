@@ -23,6 +23,22 @@ help="$("$CU" --help)"
 assert_contains "$help" "--json" "help documents JSON mode"
 pass "help documents JSON mode"
 
+windows=$( \
+  CU_DIR="$TMP/state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  "$CU" windows Demo
+)
+assert_contains "$windows" $'Demo\tDemo Window' "windows exposes native CoreGraphics records"
+pass "native window listing"
+
+window_wait=$( \
+  CU_DIR="$TMP/state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  "$CU" wait --window Demo 'Demo Window' --timeout 10
+)
+assert_contains "$window_wait" 'window ready: Demo — Demo Window' "condition wait observes native window state"
+pass "condition-based window wait"
+
 tree=$(
   CU_DIR="$TMP/state" \
   CU_OSASCRIPT="$ROOT/tests/fixtures/mock-osascript" \
@@ -178,6 +194,16 @@ runtime_action=$(
 assert_contains "$runtime_action" '"action":"AXPress"' "act uses native AX action"
 assert_contains "$runtime_action" '"verification":{"available":true,"changed":false' "act automatically verifies"
 pass "observe/act runtime"
+
+no_verify_action=$( \
+  CU_DIR="$TMP/runtime-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" \
+  CU_SIPS="$ROOT/tests/fixtures/mock-sips" \
+  "$CU" act e_1 --snapshot "$snapshot" --no-verify --json
+)
+assert_contains "$no_verify_action" '"verification":{"available":false,"changed":null' "no-verify skips verification work"
+pass "no-verify action path"
 
 if stale=$(
   CU_DIR="$TMP/runtime-state" \
