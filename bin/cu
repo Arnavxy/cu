@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.2.7"
+CU_VERSION="0.2.8"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -173,6 +173,14 @@ cmd_shot() {
 # activates the target app first. That steals focus — by design.
 _tree_raw() {
   local app="$1"
+  if native_available; then
+    local native_tree
+    native_tree=$("$NATIVE" ax-tree "$app" 2>/dev/null) || native_tree=""
+    if [[ -n "$native_tree" ]]; then
+      print -r -- "$native_tree" | awk -F '\t' '{ printf "%s | %s | %d,%d\n", $2, $3, $4 + ($6 / 2), $5 + ($7 / 2) }'
+      return 0
+    fi
+  fi
   local app_as; app_as=$(as_escape "$app")
   "$OSASCRIPT" <<OSA 2>&1
 on walkEl(el, depth)
@@ -662,7 +670,7 @@ cmd_observe() {
   printf 'META\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$snapshot" "$created" "$app_name" "$pid" "$window_id" "$wx" "$wy" "$ww" "$wh" "$bundle" "$title" > "$tmp"
 
-  local source ax_output ocr_output line element_path role name ex ey ew eh actions confidence id count=0
+  local source ax_output ocr_output line element_path role name ex ey ew eh actions value confidence id count=0
   if [[ "$context_meta" == META$'\t'* ]]; then
     # Preserve the tab-delimited native protocol. Assigning $1 and printing $0
     # would rebuild it with awk's default (space) output separator.
@@ -678,12 +686,12 @@ cmd_observe() {
   fi
   if [[ -n "$ax_output" ]]; then
     source="native_ax"
-    while IFS=$'\t' read -r element_path role name ex ey ew eh actions; do
+    while IFS=$'\t' read -r element_path role name ex ey ew eh actions value; do
       [[ -n "$element_path" && -n "$role" && -n "$name" ]] || continue
       if (( ! all )) && [[ ! "$role" =~ $INTERACTIVE ]]; then continue; fi
       count=$((count + 1)); id="e_$count"; confidence="1.000"
-      printf 'EL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$id" "$source" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$confidence" "$actions" >> "$tmp"
+      printf 'EL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$id" "$source" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$confidence" "$actions" "$value" >> "$tmp"
     done <<< "$ax_output"
   else
     source="vision_ocr"
@@ -693,8 +701,9 @@ cmd_observe() {
       [[ -n "$name" && -n "$cx" && -n "$cy" ]] || continue
       count=$((count + 1)); id="e_$count"; role="AXOCRText"; element_path="-"
       ex=$((cx - ew / 2)); ey=$((cy - eh / 2)); actions="OCRClick"
-      printf 'EL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$id" "$source" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$confidence" "$actions" >> "$tmp"
+      value=""
+      printf 'EL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$id" "$source" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$confidence" "$actions" "$value" >> "$tmp"
     done <<< "$ocr_output"
   fi
   (( count > 0 )) || { rm -f "$tmp"; die "observation produced no named elements"; }
@@ -710,11 +719,11 @@ cmd_observe() {
   print -rn -- ',"bounds":['; print -rn -- "$wx,$wy,$ww,$wh"; print -rn -- ']}'
   print -rn -- ',"elements":['
   local kind first=1
-  while IFS=$'\t' read -r kind id source element_path role name ex ey ew eh confidence actions; do
+  while IFS=$'\t' read -r kind id source element_path role name ex ey ew eh confidence actions value; do
     [[ "$kind" == EL ]] || continue
     (( first )) || print -rn -- ','; first=0
     print -rn -- '{"id":'; json_string "$id"; print -rn -- ',"source":'; json_string "$source"
-    print -rn -- ',"role":'; json_string "$role"; print -rn -- ',"name":'; json_string "$name"
+    print -rn -- ',"role":'; json_string "$role"; print -rn -- ',"name":'; json_string "$name"; print -rn -- ',"value":'; json_string "$value"
     print -rn -- ',"bounds":['; print -rn -- "$ex,$ey,$ew,$eh"; print -rn -- '],"confidence":'; print -rn -- "$confidence"
     print -rn -- ',"actions":'; json_actions "$actions"; print -rn -- '}'
   done < "$file"

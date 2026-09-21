@@ -4,8 +4,8 @@ mock_window_id="${CU_MOCK_WINDOW_ID:-42}"
 case "${1:-}" in
   context)
     printf 'META\t%s\t4242\t100\t200\t800\t600\tDemo\tDemo Window\tcom.example.Demo\n' "$mock_window_id"
-    print -r -- $'AX\tw0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress'
-    print -r -- $'AX\tw0.1\tAXButton\tSave\t225\t235\t60\t30\tAXPress'
+    print -r -- $'AX\tw0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress\t56'
+    print -r -- $'AX\tw0.1\tAXButton\tSave\t225\t235\t60\t30\tAXPress\t'
     ;;
   bounds|activate)
     print -r -- "${mock_window_id}"$'\t4242\t100\t200\t800\t600\tDemo\tDemo Window'
@@ -31,8 +31,9 @@ case "${1:-}" in
     print -r -- 'trusted'
     ;;
   ax-tree)
-    print -r -- $'w0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress'
-    print -r -- $'w0.1\tAXButton\tSave\t225\t235\t60\t30\tAXPress'
+    [[ "${CU_MOCK_NATIVE_AX_UNAVAILABLE:-0}" == 1 ]] && exit 3
+    print -r -- $'w0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress\t56'
+    print -r -- $'w0.1\tAXButton\tSave\t225\t235\t60\t30\tAXPress\t'
     ;;
   ax-perform)
     print -r -- 'AXPress'

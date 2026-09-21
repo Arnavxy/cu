@@ -163,6 +163,7 @@ struct AXRecord {
     let path: String
     let role: String
     let name: String
+    let value: String
     let frame: CGRect
     let actions: [String]
 }
@@ -231,18 +232,25 @@ func axName(_ element: AXUIElement, role: String) -> String {
     }
     // Editable values may contain credentials or drafts. Only use values from
     // non-editable text-like roles when no label/description exists.
-    let valueSafeRoles = ["AXStaticText", "AXHeading", "AXLink", "AXButton", "AXMenuItem"]
-    if valueSafeRoles.contains(role) {
-        let value = axString(element, kAXValueAttribute as CFString)
-        if !value.isEmpty && value.count <= 200 { return value }
-    }
+    let value = axReadableValue(element, role: role)
+    if !value.isEmpty { return value }
     return ""
+}
+
+func axReadableValue(_ element: AXUIElement, role: String) -> String {
+    // Never expose values from editable or password-like controls. These roles
+    // are deliberately limited to static/read-only content such as Calculator
+    // results and status labels.
+    let safeRoles = ["AXStaticText", "AXHeading", "AXLink", "AXButton", "AXMenuItem", "AXCell"]
+    guard safeRoles.contains(role) else { return "" }
+    let value = axString(element, kAXValueAttribute as CFString)
+    return value.count <= 200 ? value : ""
 }
 
 func axRecord(_ element: AXUIElement, path: String, knownRole: String? = nil) -> AXRecord? {
     let role = knownRole ?? axString(element, kAXRoleAttribute as CFString)
     guard !role.isEmpty, let frame = axFrame(element) else { return nil }
-    return AXRecord(path: path, role: role, name: axName(element, role: role), frame: frame, actions: axActions(element))
+    return AXRecord(path: path, role: role, name: axName(element, role: role), value: axReadableValue(element, role: role), frame: frame, actions: axActions(element))
 }
 
 let interactiveAXRoles: Set<String> = [
@@ -274,7 +282,7 @@ func axRecords(pid: pid_t, interactiveOnly: Bool = false) -> [AXRecord] {
 
 func printAXRecord(_ record: AXRecord) {
     let frame = record.frame.integral
-    print("\(record.path)\t\(clean(record.role))\t\(clean(record.name))\t\(Int(frame.origin.x))\t\(Int(frame.origin.y))\t\(Int(frame.width))\t\(Int(frame.height))\t\(record.actions.map(clean).joined(separator: ","))")
+    print("\(record.path)\t\(clean(record.role))\t\(clean(record.name))\t\(Int(frame.origin.x))\t\(Int(frame.origin.y))\t\(Int(frame.width))\t\(Int(frame.height))\t\(record.actions.map(clean).joined(separator: ","))\t\(clean(record.value))")
 }
 
 func resolveAX(pid: pid_t, path: String) -> AXUIElement? {

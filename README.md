@@ -98,7 +98,7 @@ call site, and still works when System Events reports no application windows.
 
 | Capability | What it provides |
 | --- | --- |
-| Observe | Native `AXUIElement` traversal with role, accessible name, bounds, actions, and compact element IDs |
+| Observe | Native `AXUIElement` traversal with role, accessible name, safe read-only value, bounds, actions, and compact element IDs |
 | Act | Snapshot-scoped semantic actions such as `AXPress`, with OCR click fallback |
 | Guard | PID, window, element path, role, name, bounds, and snapshot-age validation before input |
 | Verify | Post-action state reporting with semantic checks, animation detection, and coordinate fallback |
@@ -175,7 +175,7 @@ default and cannot be reused against a different process or window.
 | --- | --- |
 | `cu observe "App" --json` | Create a semantic snapshot with stable element handles |
 | `cu act e_N --snapshot s_ID --json` | Act on a handle and verify the outcome |
-| `cu tree "App" [filter] [--all]` | Print accessible controls and logical coordinates |
+| `cu tree "App" [filter] [--all]` | Print native accessible controls, names, and logical coordinates |
 | `cu clickel "App" "Name" [--role ROLE] [--index N]` | Perform a named Accessibility action |
 | `cu clicktext "App" "Text" [--index N]` | Click visible text through local OCR |
 | `cu shot [name]` / `cu shot -w "App"` | Capture the display or one application window |
