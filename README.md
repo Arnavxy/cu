@@ -1,128 +1,228 @@
 # cu
 
-cu is a small, local computer-use harness for macOS agents and automation
-scripts. It gives an agent structured eyes and hands:
+[![Tests](https://github.com/Arnavxy/cu/actions/workflows/test.yml/badge.svg)](https://github.com/Arnavxy/cu/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#requirements)
 
-- Accessibility-tree inspection before screenshots.
-- Semantic clicks by accessible name, role, and occurrence index.
-- CoreGraphics window discovery when hardened apps expose no AX windows.
-- On-device Vision OCR and guarded visible-text clicks as the final fallback.
-- Logical-point mouse and keyboard actions.
-- Real CoreGraphics wheel scrolling.
-- JSON output for machine clients.
-- Local screenshots, verification helpers, and an action log.
+**A fast, token-aware computer-use runtime for macOS agents.**
 
-cu is intentionally only the tool layer. It does not choose goals, call an LLM,
-or run an agent loop.
+`cu` observes the real macOS desktop, exposes interactive UI elements as compact
+JSON, acts on snapshot-scoped handles, and verifies the result. It gives an
+agent reliable “eyes and hands” without requiring a full screenshot for every
+step.
 
-## Requirements
+```bash
+observation="$(cu observe "Xcode" --json)"
+snapshot="$(jq -r '.snapshot' <<< "$observation")"
+target="$(jq -r '.elements[] | select(.name == "Clone…") | .id' <<< "$observation")"
 
-- macOS 13 Ventura or newer.
-- zsh, which ships with macOS.
-- cliclick for pointer and keyboard input:
+cu act "$target" --snapshot "$snapshot" --json
+```
 
-  brew install cliclick
+```json
+{
+  "ok": true,
+  "action": "AXPress",
+  "source": "native_ax",
+  "verification": {"available": true, "changed": true, "window_state": "changed"}
+}
+```
 
-- Xcode Command Line Tools, used to build the small native helper:
+## What cu is
 
-  xcode-select --install
+`cu` is a local command-line runtime for computer-use agents and desktop
+automation on macOS. It controls the user's real session through native
+Accessibility APIs, CoreGraphics, Apple Vision, and guarded keyboard/mouse
+input.
 
-Grant Accessibility to the terminal or agent process running cu under
-System Settings -> Privacy & Security -> Accessibility. Grant Screen Recording
-when using screenshots. Run:
+It is **not** a virtual computer, an autonomous agent, an LLM wrapper, or a
+background service. The caller chooses the goal and the next action; `cu`
+supplies observation, input, safety checks, and feedback. In that sense it
+simulates human computer use against real applications rather than simulating
+an operating system.
 
-  ./bin/cu doctor
+## Why it exists
 
-Build and install both executables:
+Screenshot-only computer use is expensive and fragile. Traditional macOS
+automation also fails on some hardened or nonstandard applications. `cu` uses
+the cheapest reliable signal first and falls back only when necessary:
 
-  ./scripts/install.zsh
+```text
+native AX semantics
+        │ unavailable
+        ▼
+CoreGraphics window discovery → window-only capture → on-device Vision OCR
+        │
+        ▼
+guarded action → pixel/window verification → structured JSON result
+```
 
-This installs to `~/bin` by default. Set `CU_INSTALL_DIR` to choose another
-directory. The implementation is designed for both Apple Silicon and Intel
-Macs.
+This design keeps observations small, avoids Retina-coordinate math at the
+call site, and still works when System Events reports no application windows.
 
-## Fallback model
+## Capabilities
 
-cu takes the cheapest reliable path available:
+| Capability | What it provides |
+| --- | --- |
+| Observe | Native `AXUIElement` traversal with role, accessible name, bounds, actions, and compact element IDs |
+| Act | Snapshot-scoped semantic actions such as `AXPress`, with OCR click fallback |
+| Guard | PID, window, element path, role, name, bounds, and snapshot-age validation before input |
+| Verify | Automatic post-action window and pixel-fingerprint comparison |
+| Find windows | CoreGraphics discovery for apps hidden from AppleScript/System Events |
+| Read visible text | On-device Vision OCR, limited to the target window whenever possible |
+| Input | Click, double-click, right-click, drag, keys, shortcuts, multiline typing, clipboard-safe paste, and real wheel scrolling |
+| Inspect | Accessibility trees, screenshots, pixel colors, window bounds, screen diffs, and action logs |
+| Integrate | Machine-readable JSON, deterministic selectors, environment overrides, and mocked tests |
 
-1. Inspect or press an element through macOS Accessibility.
-2. If AX cannot enumerate a window, locate it through CoreGraphics.
-3. Capture only that window, recognize text locally with Apple Vision, and
-   return logical screen coordinates.
-4. For app-owned menu-bar text, search the display containing the app window.
+By default, `observe` returns interactive controls only. `--all` includes the
+surrounding labels and other named elements when the agent needs more context.
 
-The final click is rechecked against the current window or display bounds before
-input is sent. Exact text is preferred over substring matches, and ambiguous
-matches require `--index`. Multi-display coordinates come from CoreGraphics;
-callers do not perform Retina scaling math.
+## Install
 
-## Examples
+### Requirements
 
-  # Inspect only interactive controls, as compact text
-  ./bin/cu tree "Safari" "Address"
+- macOS 13 Ventura or newer
+- Xcode Command Line Tools
+- [`cliclick`](https://github.com/BlueM/cliclick) for pointer and keyboard input
 
-  # Ask for all matching elements as JSON
-  ./bin/cu --json tree "Notes" --all
+```bash
+xcode-select --install
+brew install cliclick
+git clone https://github.com/Arnavxy/cu.git
+cd cu
+./scripts/install.zsh
+```
 
-  # Disambiguate duplicate labels
-  ./bin/cu clickel "Notes" "Delete" --role AXButton --index 2
+The installer builds the optimized Swift helper and installs `cu` and
+`cu-native` to `~/bin`. Override the destination with `CU_INSTALL_DIR`.
 
-  # OCR fallback for a custom UI that exposes no Accessibility element
-  ./bin/cu clicktext "ExampleApp" "New Window"
+Grant Accessibility to the terminal or agent process under **System Settings →
+Privacy & Security → Accessibility**. Screenshot and OCR commands also need
+Screen Recording permission. Then check the installation:
 
-  # Keep secrets out of shell history and cu logs
-  printf '%s' "$PASSWORD" | ./bin/cu type --stdin --secret
+```bash
+cu doctor
+```
 
-  # Use an actual mouse wheel
-  ./bin/cu scroll down 4
+## Agent workflow
 
-  # Capture a screenshot (treat it as sensitive data)
-  ./bin/cu shot before
+### 1. Observe
 
-JSON mode is available globally (`cu --json ...`) or on `tree`, `clickel`, and
-`clicktext` directly. A tree response includes `source: "ax"` or
-`source: "ocr"`, so an agent can adjust its confidence or policy explicitly.
-The output is intended to be easy for an agent wrapper to consume without
-parsing human-oriented status text.
+```bash
+cu observe "Notes" --json
+```
+
+The response contains application/window identity and stable IDs such as
+`e_1`. The private backing snapshot is stored under `~/.cu/snapshots` with
+owner-only permissions.
+
+### 2. Choose
+
+The calling agent selects an element from its semantic role, name, bounds, and
+available actions. No planning model is built into `cu`.
+
+### 3. Act and verify
+
+```bash
+cu act e_1 --snapshot s_1789971554_19537 --json
+```
+
+Before acting, `cu` confirms that the original process, window, and target are
+still valid. It safely translates moved-window coordinates and rejects changed
+or ambiguous state. After the action, it reports whether the window changed,
+stayed the same, switched, or closed.
+
+Handles are deliberately short-lived. Snapshots expire after 120 seconds by
+default and cannot be reused against a different process or window.
+
+## Command reference
+
+| Command | Purpose |
+| --- | --- |
+| `cu observe "App" --json` | Create a semantic snapshot with stable element handles |
+| `cu act e_N --snapshot s_ID --json` | Act on a handle and verify the outcome |
+| `cu tree "App" [filter] [--all]` | Print accessible controls and logical coordinates |
+| `cu clickel "App" "Name" [--role ROLE] [--index N]` | Perform a named Accessibility action |
+| `cu clicktext "App" "Text" [--index N]` | Click visible text through local OCR |
+| `cu shot [name]` / `cu shot -w "App"` | Capture the display or one application window |
+| `cu click`, `dclick`, `rclick`, `move`, `drag` | Use logical-point pointer input |
+| `cu type`, `paste --stdin`, `key`, `combo` | Send keyboard input or clipboard-safe multiline text |
+| `cu scroll up\|down\|top\|bottom [n]` | Send wheel or navigation scrolling |
+| `cu color X Y`, `cu diff before after` | Verify visual state without image-model tokens |
+| `cu apps`, `open`, `bounds` | Inspect and activate application context |
+| `cu doctor`, `log`, `clean` | Diagnose, inspect history, and remove screenshots |
+
+Run `cu help` for the complete local usage guide.
+
+## Selection and fallback behavior
+
+For semantic actions, exact accessible-name matches win over substring matches.
+Use `--role` and `--index` when labels repeat. `clickel` tries native AX first,
+then the legacy bridge, then local OCR. `observe` uses native AX and falls back
+to OCR only when AX exposes no named elements.
+
+All public coordinates are logical macOS points. Multi-display origins and
+Retina scaling are resolved internally through CoreGraphics.
+
+## Performance model
+
+- Interactive-only native traversal is the default to minimize latency and JSON size.
+- OCR runs locally and only as a fallback.
+- Captures are scoped to the target window when possible.
+- Verification uses a downsampled pixel fingerprint rather than returning another image.
+- `paste --stdin` sends large or multiline input in one operation and restores the prior clipboard contents.
+
+Actual latency depends on the target application's accessibility tree and the
+machine. Consumers should measure their own workflows rather than assume fixed
+timings.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| CU_DIR | ~/.cu | Screenshot and log directory |
-| CU_KEEP_SHOTS | 20 | Number of screenshots retained |
-| CLICLICK | discovered from PATH | Input backend |
-| CU_OSASCRIPT | /usr/bin/osascript | AppleScript/JXA backend; useful for tests |
-| CU_NATIVE | sibling `cu-native` executable | CoreGraphics and Vision helper |
-| CU_SCREENCAPTURE | /usr/sbin/screencapture | Screenshot backend; useful for tests |
-| CU_SIPS | /usr/bin/sips | Image scaling backend; useful for tests |
+| `CU_DIR` | `~/.cu` | Private snapshots, screenshots, and action log |
+| `CU_KEEP_SHOTS` | `20` | Number of named screenshots retained |
+| `CU_SNAPSHOT_TTL` | `120` | Maximum actionable snapshot age in seconds |
+| `CU_VERIFY_DELAY` | `0.20` | UI settling delay before verification |
+| `CLICLICK` | discovered from `PATH` | Input backend |
+| `CU_NATIVE` | sibling `cu-native` | Native AX/CoreGraphics/Vision helper |
+| `CU_OSASCRIPT` | `/usr/bin/osascript` | Legacy bridge and test override |
+| `CU_SCREENCAPTURE` | `/usr/sbin/screencapture` | Capture backend and test override |
+| `CU_SIPS` | `/usr/bin/sips` | Image-scaling backend and test override |
 
-## Testing
+## Development
 
-Tests mock AppleScript, screenshots, OCR, and pointer input, so they do not
-click your desktop. They cover AX selectors, JSON, AX-to-OCR fallback,
-window-relative coordinates, and display-level menu fallback:
+```bash
+./tests/test_cu.zsh
+zsh -n bin/cu scripts/*.zsh tests/*.zsh
+./scripts/build-native.zsh
+```
 
-  ./tests/test_cu.zsh
+Tests use mocked Accessibility, OCR, screenshot, and input backends, so the test
+suite does not click the developer's desktop. A generic Xcode demonstration is
+available at `./scripts/demo.zsh`; it intentionally contains no personal data.
 
-## Scope and safety
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
+[CHANGELOG.md](CHANGELOG.md).
 
-cu can read accessibility state, capture screens, type text, and control
-applications with the permissions you grant it. Treat screenshots, accessibility
-output, logs, and agent clients as potentially sensitive. Use type --stdin for
-credentials and review agent permissions before connecting cu to an untrusted
-client. Temporary OCR captures are deleted immediately; named screenshots are
-retained locally and auto-pruned.
+## Security and limitations
 
-## Why another macOS computer-use tool?
+Computer-use tooling is powerful. `cu` can inspect accessibility state, capture
+screens, and control applications with the permissions granted to its calling
+process. Treat snapshots, screenshots, logs, and downstream agent clients as
+sensitive.
 
-There are larger MCP and multi-platform projects in this space. cu focuses on
-being a transparent, token-aware harness that can be embedded in any agent loop
-or test runner. It is a computer-use adapter, not a simulator: it controls the
-real macOS session while leaving planning and policy to the calling agent. It is
-deliberately not an MCP server, model wrapper, or background daemon; those can
-be layered on later.
+Native observations omit values from editable and secure text fields. Use
+`type --stdin --secret` for credentials; it avoids putting the secret in shell
+history or the action log. Temporary OCR captures are deleted immediately.
+
+Current limitations:
+
+- macOS only; tested behavior varies with application accessibility quality.
+- Canvas, game, remote-desktop, and heavily custom UIs may require OCR or raw input.
+- Pixel verification establishes that the visible window changed, not that the user's high-level goal succeeded.
+- Native AX and Screen Recording still require explicit macOS privacy permissions.
 
 ## License
 
-MIT. See LICENSE.
+MIT. See [LICENSE](LICENSE).

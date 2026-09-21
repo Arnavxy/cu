@@ -2,8 +2,9 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; LOG="$CUDIR/log"
-mkdir -p "$SHOTS"
+CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
+mkdir -p "$SHOTS" "$SNAPSHOTS"
+chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
 SCRIPT_DIR="${0:A:h}"
 if [[ -z "${CLICLICK:-}" ]]; then
   CLICLICK="$(command -v cliclick 2>/dev/null || true)"
@@ -241,6 +242,39 @@ _ocr_display_raw() {
   _ocr_rect "$x" "$y" "$w" "$h" "$app display"
 }
 
+# Detailed Vision output: text, centre-x, centre-y, width, height, confidence.
+_ocr_window_tsv() {
+  local app="$1" row id pid x y w h owner title nonce raw image output rc
+  native_available || return 1
+  activate_app "$app" || true
+  sleep 0.15
+  row=$(native_window "$app") || return 1
+  IFS=$'\t' read -r id pid x y w h owner title <<< "$row"
+  nonce="$$.$RANDOM"
+  raw="$SHOTS/observe.$nonce.raw.png"; image="$SHOTS/observe.$nonce.png"
+  "$SCREENCAPTURE" -x -o -R"${x},${y},${w},${h}" "$raw" >/dev/null 2>&1
+  [[ -s "$raw" ]] || return 1
+  "$SIPS" --resampleWidth "$w" "$raw" --out "$image" >/dev/null 2>&1 || cp "$raw" "$image"
+  rm -f "$raw"
+  output=$("$NATIVE" ocr "$image" "$x" "$y" 2>&1); rc=$?
+  rm -f "$image"
+  (( rc == 0 )) || return "$rc"
+  print -r -- "$output"
+}
+
+_window_fingerprint() {
+  local app="$1" row id pid x y w h owner title nonce image hash
+  row=$(native_window "$app") || return 1
+  IFS=$'\t' read -r id pid x y w h owner title <<< "$row"
+  nonce="$$.$RANDOM"; image="$SHOTS/verify.$nonce.png"
+  "$SCREENCAPTURE" -x -o -l"$id" "$image" >/dev/null 2>&1
+  [[ -s "$image" ]] || return 1
+  hash=$("$NATIVE" fingerprint "$image" 2>/dev/null); local rc=$?
+  rm -f "$image"
+  (( rc == 0 )) || return "$rc"
+  print -r -- "$hash"
+}
+
 INTERACTIVE='^(AXButton|AXRadioButton|AXCheckBox|AXTextField|AXTextArea|AXMenuButton|AXMenuItem|AXPopUpButton|AXLink|AXCell|AXRow|AXComboBox|AXSlider|AXTabGroup|AXDisclosureTriangle|AXOCRText)'
 
 filter_tree() {
@@ -314,6 +348,32 @@ cmd_tree() {
 }
 
 cmd_find() { [[ $# -ge 2 ]] || die "usage: cu find \"App Name\" \"text\""; cmd_tree "$1" "$2"; }
+
+
+_native_press() {
+  local app="$1" target="$2" wanted_role="${3:-}" wanted_index="${4:-0}"
+  native_available || return 1
+  local row id pid x y w h owner title out matched
+  row=$(native_window "$app") || { print -r -- "ERR: no native window matched '$app'"; return 1; }
+  IFS=$'\t' read -r id pid x y w h owner title <<< "$row"
+  out=$("$NATIVE" ax-tree "$app" --interactive 2>&1) || { print -r -- "ERR: $out"; return 1; }
+  matched=$(print -r -- "$out" | awk -F '\t' -v name="$target" -v role="$wanted_role" '$3 == name && (role == "" || $2 == role)')
+  local -a matches
+  if [[ -n "$matched" ]]; then matches=("${(@f)matched}"); else matches=(); fi
+  local count=${#matches}
+  (( count > 0 )) || { print -r -- "ERR: no native AX element named '$target'"; return 1; }
+  if (( wanted_index == 0 && count > 1 )); then
+    print -r -- "ERR: selector matched $count native AX elements; add --role and/or --index"
+    return 1
+  fi
+  (( wanted_index == 0 )) && wanted_index=1
+  (( wanted_index >= 1 && wanted_index <= count )) || { print -r -- "ERR: selector matched $count element(s); index $wanted_index is out of range"; return 1; }
+  local element_path role name ex ey ew eh actions
+  IFS=$'\t' read -r element_path role name ex ey ew eh actions <<< "${matches[$wanted_index]}"
+  local result
+  result=$("$NATIVE" ax-perform "$pid" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" 2>&1) || { print -r -- "ERR: $result"; return 1; }
+  print -r -- "PRESSED (NativeAX:$result) $role | $name | matches=$count"
+}
 
 
 # Press a named element via the accessibility API — NOT coordinates.
@@ -468,7 +528,8 @@ cmd_clickel() {
     esac
   done
   [[ "$index" == <-> ]] || die "--index must be a non-negative integer"
-  local res; res=$(_press "$app" "$target" "$role" "$index")
+  local res
+  if native_available; then res=$(_native_press "$app" "$target" "$role" "$index"); else res=$(_press "$app" "$target" "$role" "$index"); fi
   if [[ -z "$res" || "$res" == ERR:* || "$res" == *"execution error"* || "$res" == *"syntax error"* || "$res" == *"Connection invalid"* ]]; then
     res=$(_click_text_fallback "$app" "$target" "$index" "$role")
   fi
@@ -508,6 +569,197 @@ cmd_clicktext() {
   (( command_status == 0 ))
 }
 
+json_actions() {
+  local csv="$1" first=1 action
+  print -rn -- '['
+  for action in ${(s:,:)csv}; do
+    [[ -n "$action" ]] || continue
+    (( first )) || print -rn -- ','; first=0
+    json_string "$action"
+  done
+  print -rn -- ']'
+}
+
+runtime_fail() {
+  local code="$1" message="$2"
+  if (( JSON_MODE )); then
+    print -rn -- '{"ok":false,"error":{"code":'; json_string "$code"
+    print -rn -- ',"message":'; json_string "$message"; print -r -- '}}'
+  else
+    print -r -- "cu: $code: $message" >&2
+  fi
+  return 1
+}
+
+cmd_observe() {
+  [[ $# -ge 1 ]] || die 'usage: cu observe "App" [--all] [--json]'
+  local app="$1"; shift
+  local all=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all) all=1; shift ;;
+      --json) JSON_MODE=1; shift ;;
+      *) die "unknown observe option '$1'" ;;
+    esac
+  done
+  native_available || die "native helper is required (run scripts/build-native.zsh)"
+  activate_app "$app" || true
+  sleep 0.15
+  local window_row window_id pid wx wy ww wh app_name title
+  window_row=$(native_window "$app") || die "no visible window matched '$app'"
+  IFS=$'\t' read -r window_id pid wx wy ww wh app_name title <<< "$window_row"
+  local info bundle=""
+  info=$("$NATIVE" app-info "$app" 2>/dev/null) || true
+  if [[ -n "$info" ]]; then local ipid iname; IFS=$'\t' read -r ipid iname bundle <<< "$info"; fi
+
+  local snapshot="s_$(date +%s)_${RANDOM}" created="$(date +%s)"
+  local tmp="$SNAPSHOTS/$snapshot.tmp" file="$SNAPSHOTS/$snapshot.tsv"
+  umask 077
+  printf 'META\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$snapshot" "$created" "$app_name" "$pid" "$window_id" "$wx" "$wy" "$ww" "$wh" "$bundle" "$title" > "$tmp"
+
+  local source ax_output ocr_output line element_path role name ex ey ew eh actions confidence id count=0
+  if (( all )); then
+    ax_output=$("$NATIVE" ax-tree "$app" 2>/dev/null) || ax_output=""
+  else
+    ax_output=$("$NATIVE" ax-tree "$app" --interactive 2>/dev/null) || ax_output=""
+  fi
+  if [[ -n "$ax_output" ]]; then
+    source="native_ax"
+    while IFS=$'\t' read -r element_path role name ex ey ew eh actions; do
+      [[ -n "$element_path" && -n "$role" && -n "$name" ]] || continue
+      if (( ! all )) && [[ ! "$role" =~ $INTERACTIVE ]]; then continue; fi
+      count=$((count + 1)); id="e_$count"; confidence="1.000"
+      printf 'EL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$id" "$source" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$confidence" "$actions" >> "$tmp"
+    done <<< "$ax_output"
+  else
+    source="vision_ocr"
+    ocr_output=$(_ocr_window_tsv "$app") || { rm -f "$tmp"; die "native AX exposed no elements and OCR capture failed"; }
+    local cx cy
+    while IFS=$'\t' read -r name cx cy ew eh confidence; do
+      [[ -n "$name" && -n "$cx" && -n "$cy" ]] || continue
+      count=$((count + 1)); id="e_$count"; role="AXOCRText"; element_path="-"
+      ex=$((cx - ew / 2)); ey=$((cy - eh / 2)); actions="OCRClick"
+      printf 'EL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$id" "$source" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$confidence" "$actions" >> "$tmp"
+    done <<< "$ocr_output"
+  fi
+  (( count > 0 )) || { rm -f "$tmp"; die "observation produced no named elements"; }
+  mv "$tmp" "$file"
+  find "$SNAPSHOTS" -type f -name 's_*.tsv' -mtime +1 -delete 2>/dev/null || true
+
+  print -rn -- '{"ok":true,"snapshot":'; json_string "$snapshot"
+  print -rn -- ',"created_at":'; print -rn -- "$created"
+  print -rn -- ',"source":'; json_string "$source"
+  print -rn -- ',"app":{"name":'; json_string "$app_name"; print -rn -- ',"pid":'; print -rn -- "$pid"
+  print -rn -- ',"bundle_id":'; json_string "$bundle"; print -rn -- '}'
+  print -rn -- ',"window":{"id":'; print -rn -- "$window_id"; print -rn -- ',"title":'; json_string "$title"
+  print -rn -- ',"bounds":['; print -rn -- "$wx,$wy,$ww,$wh"; print -rn -- ']}'
+  print -rn -- ',"elements":['
+  local kind first=1
+  while IFS=$'\t' read -r kind id source element_path role name ex ey ew eh confidence actions; do
+    [[ "$kind" == EL ]] || continue
+    (( first )) || print -rn -- ','; first=0
+    print -rn -- '{"id":'; json_string "$id"; print -rn -- ',"source":'; json_string "$source"
+    print -rn -- ',"role":'; json_string "$role"; print -rn -- ',"name":'; json_string "$name"
+    print -rn -- ',"bounds":['; print -rn -- "$ex,$ey,$ew,$eh"; print -rn -- '],"confidence":'; print -rn -- "$confidence"
+    print -rn -- ',"actions":'; json_actions "$actions"; print -rn -- '}'
+  done < "$file"
+  print -r -- ']}'
+  log "observe $app snapshot=$snapshot source=$source elements=$count"
+}
+
+cmd_act() {
+  [[ $# -ge 1 ]] || die 'usage: cu act ELEMENT_ID --snapshot SNAPSHOT_ID [--no-verify] [--json]'
+  local element_id="$1" snapshot="" verify=1; shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --snapshot) [[ $# -ge 2 ]] || die "--snapshot requires an ID"; snapshot="$2"; shift 2 ;;
+      --no-verify) verify=0; shift ;;
+      --json) JSON_MODE=1; shift ;;
+      *) die "unknown act option '$1'" ;;
+    esac
+  done
+  [[ "$snapshot" =~ '^s_[0-9]+_[0-9]+$' ]] || { runtime_fail invalid_snapshot "invalid or missing snapshot ID"; return 1; }
+  [[ "$element_id" =~ '^e_[0-9]+$' ]] || { runtime_fail invalid_element "invalid element ID"; return 1; }
+  local file="$SNAPSHOTS/$snapshot.tsv"
+  [[ -f "$file" ]] || { runtime_fail snapshot_not_found "snapshot '$snapshot' does not exist or expired"; return 1; }
+  local meta kind snap created app pid window_id wx wy ww wh bundle title
+  meta=$(sed -n '1p' "$file")
+  IFS=$'\t' read -r kind snap created app pid window_id wx wy ww wh bundle title <<< "$meta"
+  local now=$(date +%s) ttl="${CU_SNAPSHOT_TTL:-120}"
+  (( now - created <= ttl )) || { runtime_fail stale_snapshot "snapshot is older than ${ttl}s; observe again"; return 1; }
+  local element
+  element=$(awk -F '\t' -v wanted="$element_id" '$1 == "EL" && $2 == wanted { print; exit }' "$file")
+  [[ -n "$element" ]] || { runtime_fail element_not_found "element '$element_id' is not in snapshot '$snapshot'"; return 1; }
+  local source element_path role name ex ey ew eh confidence actions
+  IFS=$'\t' read -r kind element_id source element_path role name ex ey ew eh confidence actions <<< "$element"
+
+  local current current_id current_pid bx by bw bh owner current_title
+  current=$(native_window "$app") || { runtime_fail stale_snapshot "application window disappeared"; return 1; }
+  IFS=$'\t' read -r current_id current_pid bx by bw bh owner current_title <<< "$current"
+  [[ "$current_id" == "$window_id" && "$current_pid" == "$pid" ]] || { runtime_fail stale_snapshot "the front window changed; observe again"; return 1; }
+  activate_app "$app" || { runtime_fail activation_failed "could not activate '$app'"; return 1; }
+  sleep 0.05
+  local dx=$((bx - wx)) dy=$((by - wy))
+  local expected_x=$((ex + dx)) expected_y=$((ey + dy))
+  local before="" after="" verification_available=false
+  if (( verify )); then before=$(_window_fingerprint "$app" 2>/dev/null) || before=""; fi
+
+  local action_result
+  if [[ "$source" == native_ax ]]; then
+    action_result=$("$NATIVE" ax-perform "$pid" "$element_path" "$role" "$name" "$expected_x" "$expected_y" "$ew" "$eh" 2>&1) || {
+      runtime_fail stale_element "$action_result"; return 1
+    }
+  elif [[ "$source" == vision_ocr ]]; then
+    need_cliclick
+    local fresh selected cx cy fw fh fresh_conf target_cx=$((expected_x + ew / 2)) target_cy=$((expected_y + eh / 2))
+    fresh=$(_ocr_window_tsv "$app") || { runtime_fail verification_failed "could not refresh OCR before clicking"; return 1; }
+    selected=$(print -r -- "$fresh" | awk -F '\t' -v wanted="$name" -v tx="$target_cx" -v ty="$target_cy" '
+      $1 == wanted { d=($2-tx)*($2-tx)+($3-ty)*($3-ty); if (!found || d<best) { best=d; row=$0; found=1 } }
+      END { if (found) print row }')
+    [[ -n "$selected" ]] || { runtime_fail stale_element "OCR text '$name' is no longer visible"; return 1; }
+    IFS=$'\t' read -r name cx cy fw fh fresh_conf <<< "$selected"
+    local ddx=$((cx - target_cx)) ddy=$((cy - target_cy)); (( ddx < 0 )) && ddx=$((-ddx)); (( ddy < 0 )) && ddy=$((-ddy))
+    local tolerance=$(( ew > eh ? ew : eh )); (( tolerance < 30 )) && tolerance=30
+    (( ddx <= tolerance && ddy <= tolerance )) || { runtime_fail stale_element "OCR target moved unexpectedly; observe again"; return 1; }
+    "$CLICLICK" "c:$cx,$cy" >/dev/null
+    action_result="OCRClick"
+  else
+    runtime_fail invalid_snapshot "unsupported element source '$source'"; return 1
+  fi
+
+  sleep "${CU_VERIFY_DELAY:-0.20}"
+  local window_state="same" changed="null" after_row after_id after_pid
+  if (( verify )); then
+    if after_row=$(native_window "$app" 2>/dev/null); then
+      IFS=$'\t' read -r after_id after_pid bx by bw bh owner current_title <<< "$after_row"
+      if [[ "$after_id" != "$window_id" ]]; then
+        window_state="changed"; changed=true; verification_available=true
+      else
+        after=$(_window_fingerprint "$app" 2>/dev/null) || after=""
+        if [[ -n "$before" && -n "$after" ]]; then
+          verification_available=true
+          [[ "$before" == "$after" ]] && changed=false || changed=true
+        fi
+      fi
+    else
+      window_state="closed"; changed=true; verification_available=true
+    fi
+  fi
+
+  if (( JSON_MODE )); then
+    print -rn -- '{"ok":true,"snapshot":'; json_string "$snapshot"; print -rn -- ',"element":'; json_string "$element_id"
+    print -rn -- ',"action":'; json_string "$action_result"; print -rn -- ',"source":'; json_string "$source"
+    print -rn -- ',"verification":{"available":'; print -rn -- "$verification_available"
+    print -rn -- ',"changed":'; print -rn -- "$changed"; print -rn -- ',"window_state":'; json_string "$window_state"; print -r -- '}}'
+  else
+    print -r -- "acted on $element_id via $action_result; verification changed=$changed window=$window_state"
+  fi
+  log "act snapshot=$snapshot element=$element_id action=$action_result changed=$changed window=$window_state"
+}
+
 cmd_click()  { need_cliclick; "$CLICLICK" "c:$1,$2";  log "click $1,$2"; print -r -- "clicked $1,$2"; }
 cmd_dclick() { need_cliclick; "$CLICLICK" "dc:$1,$2"; log "dclick $1,$2"; print -r -- "double-clicked $1,$2"; }
 cmd_rclick() { need_cliclick; "$CLICLICK" "rc:$1,$2"; log "rclick $1,$2"; print -r -- "right-clicked $1,$2"; }
@@ -530,9 +782,32 @@ cmd_type() {
     [[ -n "$text" ]] || die "usage: cu type [--secret|--stdin] \"text\""
   fi
   (( secret || stdin_mode )) && warn "typed text is not written to cu logs; prefer --stdin for secrets to avoid shell history"
-  "$CLICLICK" "t:$text"
+  local remaining="$text" segment
+  local -a type_args
+  while [[ "$remaining" == *$'\n'* ]]; do
+    segment="${remaining%%$'\n'*}"
+    [[ -z "$segment" ]] || type_args+=("t:$segment")
+    type_args+=("kp:return")
+    remaining="${remaining#*$'\n'}"
+  done
+  [[ -z "$remaining" ]] || type_args+=("t:$remaining")
+  (( ${#type_args} > 0 )) && "$CLICLICK" $type_args
   log "type ${#text} chars"
   if (( JSON_MODE )); then print -rn -- '{"ok":true,"typed_chars":'; print -rn -- "${#text}"; print -r -- '}'; else print -r -- "typed ${#text} chars"; fi
+}
+cmd_paste() {
+  [[ "${1:-}" == --stdin && $# -eq 1 ]] || die "usage: cu paste --stdin"
+  native_available || die "native helper is required for clipboard-safe paste"
+  local nonce="$$.$RANDOM"
+  local input="$CUDIR/paste.$nonce.txt"
+  umask 077
+  /usr/bin/tee "$input" >/dev/null
+  local chars; chars=$(wc -m < "$input" | tr -d ' ')
+  local result; result=$("$NATIVE" paste "$input" 2>&1); local paste_status=$?
+  rm -f "$input"
+  (( paste_status == 0 )) || die "$result"
+  log "paste $chars chars"
+  if (( JSON_MODE )); then print -r -- "{\"ok\":true,\"pasted_chars\":$chars}"; else print -r -- "pasted $chars chars"; fi
 }
 cmd_key()    { need_cliclick; "$CLICLICK" "kp:$1"; log "key $1"; print -r -- "pressed $1"; }
 cmd_pos()    { need_cliclick; "$CLICLICK" p; }
@@ -602,7 +877,10 @@ cmd_doctor() {
   "$OSASCRIPT" -e 'tell application "System Events" to count of every process' >/dev/null 2>&1 && ax="OK"
   print -r -- "AX tree  : $ax"
   if native_available; then
+    local native_ax="unavailable"
+    "$NATIVE" ax-status >/dev/null 2>&1 && native_ax="OK"
     print -r -- "native   : OK — CoreGraphics windows + Vision OCR"
+    print -r -- "native AX: $native_ax"
   else
     print -r -- "native   : MISSING — run scripts/build-native.zsh"
   fi
@@ -641,6 +919,7 @@ cat <<'U'
 cu — computer-use harness (logical points throughout)
 
 SEE (cheap first, image only if needed)
+  cu observe "App" --json      snapshot window + native AX/OCR elements with stable IDs
   cu [--json] tree "App" [filter] interactive elements + click coords — TEXT, ~0 tokens
                               (activates the app; add --all for every element)
   cu find "App" "Save"        same, filtered
@@ -650,11 +929,14 @@ SEE (cheap first, image only if needed)
   cu diff before after        did the screen change? byte compare, no tokens
 
 ACT
+  cu act e_12 --snapshot s_ID --json
+                              act on a snapshot element and verify the result
   cu clickel "App" "Save"     click by name; add --role ROLE --index N for duplicates
   cu clicktext "App" "Save"   OCR fallback: click visible text without AX
   cu click X Y                also dclick, rclick, move
   cu drag X1 Y1 X2 Y2
   cu type "text"              use --stdin --secret for credentials
+  cu paste --stdin            fast multiline paste; restores the previous clipboard
   cu key return               esc tab space arrow-up f1 delete ...
   cu combo cmd s              cu combo cmd shift 4
   cu scroll down|up|top|bottom [n]
@@ -688,12 +970,14 @@ if [[ $# -gt 0 && "$1" == "--json" ]]; then JSON_MODE=1; shift; fi
 [[ $# -eq 0 ]] && { usage; exit 0; }
 sub="$1"; shift
 case "$sub" in
+  observe) cmd_observe "$@" ;;    act) cmd_act "$@" ;;
   shot) cmd_shot "$@" ;;          tree) cmd_tree "$@" ;;
   find) cmd_find "$@" ;;          clickel) cmd_clickel "$@" ;;
   clicktext) cmd_clicktext "$@" ;;
   click) cmd_click "$@" ;;      dclick) cmd_dclick "$@" ;;
   rclick) cmd_rclick "$@" ;;    move) cmd_move "$@" ;;
   drag) cmd_drag "$@" ;;        type) cmd_type "$@" ;;
+  paste) cmd_paste "$@" ;;
   key) cmd_key "$@" ;;          combo) cmd_combo "$@" ;;
   scroll) cmd_scroll "$@" ;;    pos) cmd_pos ;;
   color) cmd_color "$@" ;;      wait) cmd_wait "$@" ;;

@@ -2,3 +2,4 @@
 .cu/
 *.swp
 bin/cu-native
+artifacts/

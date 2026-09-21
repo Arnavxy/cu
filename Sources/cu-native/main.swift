@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 import Vision
@@ -148,8 +149,234 @@ func ocr(path: String, originX: Double, originY: Double) throws {
     }
 }
 
+struct AXRecord {
+    let path: String
+    let role: String
+    let name: String
+    let frame: CGRect
+    let actions: [String]
+}
+
+func axValue(_ element: AXUIElement, _ attribute: CFString) -> CFTypeRef? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
+    return value
+}
+
+func axString(_ element: AXUIElement, _ attribute: CFString) -> String {
+    guard let value = axValue(element, attribute) else { return "" }
+    if let string = value as? String { return clean(string) }
+    return ""
+}
+
+func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+    guard let value = axValue(element, kAXChildrenAttribute as CFString) else { return [] }
+    return value as? [AXUIElement] ?? []
+}
+
+func axWindows(pid: pid_t) -> [AXUIElement] {
+    let application = AXUIElementCreateApplication(pid)
+    guard let value = axValue(application, kAXWindowsAttribute as CFString) else { return [] }
+    return value as? [AXUIElement] ?? []
+}
+
+func axPoint(_ element: AXUIElement, _ attribute: CFString) -> CGPoint? {
+    guard let value = axValue(element, attribute), CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    var point = CGPoint.zero
+    guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else { return nil }
+    return point
+}
+
+func axSize(_ element: AXUIElement, _ attribute: CFString) -> CGSize? {
+    guard let value = axValue(element, attribute), CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    var size = CGSize.zero
+    guard AXValueGetValue(value as! AXValue, .cgSize, &size) else { return nil }
+    return size
+}
+
+func axFrame(_ element: AXUIElement) -> CGRect? {
+    guard
+        let point = axPoint(element, kAXPositionAttribute as CFString),
+        let size = axSize(element, kAXSizeAttribute as CFString),
+        size.width > 0, size.height > 0
+    else { return nil }
+    return CGRect(origin: point, size: size).integral
+}
+
+func axActions(_ element: AXUIElement) -> [String] {
+    var values: CFArray?
+    guard AXUIElementCopyActionNames(element, &values) == .success else { return [] }
+    return (values as? [String] ?? []).filter { $0.hasPrefix("AX") }
+}
+
+func axName(_ element: AXUIElement, role: String) -> String {
+    let attributes: [CFString] = [
+        kAXTitleAttribute as CFString,
+        kAXDescriptionAttribute as CFString,
+        kAXHelpAttribute as CFString
+    ]
+    for attribute in attributes {
+        let value = axString(element, attribute)
+        if !value.isEmpty { return value }
+    }
+    // Editable values may contain credentials or drafts. Only use values from
+    // non-editable text-like roles when no label/description exists.
+    let valueSafeRoles = ["AXStaticText", "AXHeading", "AXLink", "AXButton", "AXMenuItem"]
+    if valueSafeRoles.contains(role) {
+        let value = axString(element, kAXValueAttribute as CFString)
+        if !value.isEmpty && value.count <= 200 { return value }
+    }
+    return ""
+}
+
+func axRecord(_ element: AXUIElement, path: String, knownRole: String? = nil) -> AXRecord? {
+    let role = knownRole ?? axString(element, kAXRoleAttribute as CFString)
+    guard !role.isEmpty, let frame = axFrame(element) else { return nil }
+    return AXRecord(path: path, role: role, name: axName(element, role: role), frame: frame, actions: axActions(element))
+}
+
+let interactiveAXRoles: Set<String> = [
+    "AXButton", "AXRadioButton", "AXCheckBox", "AXTextField", "AXTextArea",
+    "AXMenuButton", "AXMenuItem", "AXPopUpButton", "AXLink", "AXCell", "AXRow",
+    "AXComboBox", "AXSlider", "AXTabGroup", "AXDisclosureTriangle"
+]
+
+func collectAX(_ element: AXUIElement, path: String, depth: Int, interactiveOnly: Bool, records: inout [AXRecord]) {
+    guard depth <= 9, records.count < 1500 else { return }
+    let role = axString(element, kAXRoleAttribute as CFString)
+    if (!interactiveOnly || interactiveAXRoles.contains(role)),
+       let record = axRecord(element, path: path, knownRole: role), !record.name.isEmpty {
+        records.append(record)
+    }
+    for (index, child) in axChildren(element).enumerated() {
+        collectAX(child, path: "\(path).\(index)", depth: depth + 1, interactiveOnly: interactiveOnly, records: &records)
+        if records.count >= 1500 { return }
+    }
+}
+
+func axRecords(pid: pid_t, interactiveOnly: Bool = false) -> [AXRecord] {
+    var records: [AXRecord] = []
+    for (index, window) in axWindows(pid: pid).enumerated() {
+        collectAX(window, path: "w\(index)", depth: 0, interactiveOnly: interactiveOnly, records: &records)
+    }
+    return records
+}
+
+func printAXRecord(_ record: AXRecord) {
+    let frame = record.frame.integral
+    print("\(record.path)\t\(clean(record.role))\t\(clean(record.name))\t\(Int(frame.origin.x))\t\(Int(frame.origin.y))\t\(Int(frame.width))\t\(Int(frame.height))\t\(record.actions.map(clean).joined(separator: ","))")
+}
+
+func resolveAX(pid: pid_t, path: String) -> AXUIElement? {
+    guard path.first == "w" else { return nil }
+    let parts = path.dropFirst().split(separator: ".")
+    guard let first = parts.first, let windowIndex = Int(first) else { return nil }
+    let windows = axWindows(pid: pid)
+    guard windows.indices.contains(windowIndex) else { return nil }
+    var element = windows[windowIndex]
+    for part in parts.dropFirst() {
+        guard let index = Int(part) else { return nil }
+        let children = axChildren(element)
+        guard children.indices.contains(index) else { return nil }
+        element = children[index]
+    }
+    return element
+}
+
+func approximatelyEqual(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat = 4) -> Bool {
+    abs(lhs.origin.x - rhs.origin.x) <= tolerance &&
+    abs(lhs.origin.y - rhs.origin.y) <= tolerance &&
+    abs(lhs.width - rhs.width) <= tolerance &&
+    abs(lhs.height - rhs.height) <= tolerance
+}
+
+func performAX(element: AXUIElement) -> String? {
+    let role = axString(element, kAXRoleAttribute as CFString)
+    if ["AXTextField", "AXTextArea", "AXComboBox"].contains(role),
+       AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success {
+        return "AXFocus"
+    }
+    let actions = axActions(element)
+    for action in ["AXPress", "AXOpen", "AXConfirm"] {
+        if actions.contains(action), AXUIElementPerformAction(element, action as CFString) == .success {
+            return action
+        }
+    }
+    if AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success {
+        return "AXFocus"
+    }
+    if actions.contains("AXShowMenu"), AXUIElementPerformAction(element, "AXShowMenu" as CFString) == .success {
+        return "AXShowMenu"
+    }
+    return nil
+}
+
+func imageFingerprint(path: String) throws -> String {
+    guard
+        let image = NSImage(contentsOfFile: path),
+        let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    else {
+        throw NSError(domain: "cu-native", code: 6, userInfo: [NSLocalizedDescriptionKey: "could not read image"])
+    }
+    let width = 64, height = 64, bytesPerPixel = 4
+    var pixels = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+    guard let context = CGContext(
+        data: &pixels,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * bytesPerPixel,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else {
+        throw NSError(domain: "cu-native", code: 7, userInfo: [NSLocalizedDescriptionKey: "could not create image context"])
+    }
+    context.interpolationQuality = .medium
+    context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+    var hash: UInt64 = 1469598103934665603
+    for byte in pixels {
+        hash ^= UInt64(byte)
+        hash &*= 1099511628211
+    }
+    return String(format: "%016llx", hash)
+}
+
+func pasteText(path: String) throws {
+    let text = try String(contentsOfFile: path, encoding: .utf8)
+    let pasteboard = NSPasteboard.general
+    let backup: [[NSPasteboard.PasteboardType: Data]] = (pasteboard.pasteboardItems ?? []).map { item in
+        var values: [NSPasteboard.PasteboardType: Data] = [:]
+        for type in item.types {
+            if let data = item.data(forType: type) { values[type] = data }
+        }
+        return values
+    }
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+
+    guard
+        let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
+        let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false)
+    else {
+        throw NSError(domain: "cu-native", code: 8, userInfo: [NSLocalizedDescriptionKey: "could not create paste events"])
+    }
+    down.flags = .maskCommand; up.flags = .maskCommand
+    down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.20)
+
+    pasteboard.clearContents()
+    if !backup.isEmpty {
+        let items = backup.map { values -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in values { item.setData(data, forType: type) }
+            return item
+        }
+        pasteboard.writeObjects(items)
+    }
+}
+
 func usage() -> Never {
-    fputs("usage: cu-native windows [app] | bounds APP | display APP | activate APP | ocr IMAGE ORIGIN_X ORIGIN_Y\n", stderr)
+    fputs("usage: cu-native windows [app] | bounds APP | display APP | activate APP | app-info APP | ocr IMAGE X Y | fingerprint IMAGE | paste FILE | ax-status | ax-tree APP | ax-perform PID PATH ROLE NAME X Y W H\n", stderr)
     exit(64)
 }
 
@@ -190,6 +417,11 @@ case "display":
     }
     print("\(display)\t\(Int(bounds.origin.x))\t\(Int(bounds.origin.y))\t\(Int(bounds.width))\t\(Int(bounds.height))")
 
+case "app-info":
+    guard args.count == 2, let window = matchingWindow(args[1]) else { usage() }
+    let running = NSRunningApplication(processIdentifier: window.pid)
+    print("\(window.pid)\t\(clean(window.app))\t\(clean(running?.bundleIdentifier ?? ""))")
+
 case "ocr":
     guard args.count == 4, let x = Double(args[2]), let y = Double(args[3]) else { usage() }
     do {
@@ -198,6 +430,64 @@ case "ocr":
         fputs("OCR failed: \(error.localizedDescription)\n", stderr)
         exit(1)
     }
+
+case "fingerprint":
+    guard args.count == 2 else { usage() }
+    do {
+        print(try imageFingerprint(path: args[1]))
+    } catch {
+        fputs("fingerprint failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+
+case "paste":
+    guard args.count == 2 else { usage() }
+    do {
+        try pasteText(path: args[1])
+        print("pasted")
+    } catch {
+        fputs("paste failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+
+case "ax-status":
+    print(AXIsProcessTrusted() ? "trusted" : "untrusted")
+    if !AXIsProcessTrusted() { exit(1) }
+
+case "ax-tree":
+    guard (args.count == 2 || args.count == 3), let window = matchingWindow(args[1]) else { usage() }
+    guard AXIsProcessTrusted() else {
+        fputs("Accessibility permission is unavailable\n", stderr)
+        exit(2)
+    }
+    let records = axRecords(pid: window.pid, interactiveOnly: args.count == 3 && args[2] == "--interactive")
+    guard !records.isEmpty else {
+        fputs("Accessibility exposed no named elements\n", stderr)
+        exit(3)
+    }
+    for record in records { printAXRecord(record) }
+
+case "ax-perform":
+    guard
+        args.count == 9,
+        let pid = pid_t(args[1]),
+        let x = Double(args[5]), let y = Double(args[6]),
+        let width = Double(args[7]), let height = Double(args[8])
+    else { usage() }
+    guard let element = resolveAX(pid: pid, path: args[2]), let record = axRecord(element, path: args[2]) else {
+        fputs("stale_element: accessibility path no longer resolves\n", stderr)
+        exit(4)
+    }
+    let expected = CGRect(x: x, y: y, width: width, height: height)
+    guard record.role == args[3], record.name == args[4], approximatelyEqual(record.frame, expected) else {
+        fputs("stale_element: role, name, or bounds changed\n", stderr)
+        exit(4)
+    }
+    guard let action = performAX(element: element) else {
+        fputs("unsupported_action: element exposes no supported action and cannot be focused\n", stderr)
+        exit(5)
+    }
+    print(action)
 
 default:
     usage()

@@ -33,6 +33,7 @@ pass "tree JSON"
 clicked=$(
   CU_DIR="$TMP/state" \
   CU_OSASCRIPT="$ROOT/tests/fixtures/mock-osascript" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
   CU_MOCK_OSASCRIPT_RESULT='PRESSED (AXPress) AXButton | Save | matches=2' \
   "$CU" --json clickel Demo Save --role AXButton --index 2
 )
@@ -43,6 +44,7 @@ pass "role/index click selector"
 press_script="$TMP/press.applescript"
 CU_DIR="$TMP/state" \
   CU_OSASCRIPT="$ROOT/tests/fixtures/mock-osascript" \
+  CU_NATIVE="$TMP/no-native-helper" \
   CU_MOCK_OSASCRIPT_CAPTURE="$press_script" \
   CU_MOCK_OSASCRIPT_RESULT='PRESSED (AXPress) AXButton | Save | matches=1' \
   "$CU" clickel Demo Save >/dev/null
@@ -52,6 +54,24 @@ pass "generated AX press AppleScript compiles"
 CLICLICK=/usr/bin/true CU_DIR="$TMP/state" "$CU" type --stdin --secret <<< "secret-value" >"$TMP/type.out" 2>"$TMP/type.err"
 assert_contains "$(cat "$TMP/type.err")" "prefer --stdin" "secret warning is emitted"
 pass "secret typing warning"
+
+multiline_log="$TMP/multiline.log"
+CU_DIR="$TMP/state" \
+  CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \
+  CU_MOCK_CLICK_LOG="$multiline_log" \
+  "$CU" type $'first\nsecond' >/dev/null
+assert_contains "$(cat "$multiline_log")" 't:first kp:return t:second' "multiline type emits Return keys"
+pass "multiline keyboard typing"
+
+paste_result=$(
+  print -rn -- $'first\nsecond' | \
+    CU_DIR="$TMP/state" \
+    CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+    "$CU" --json paste --stdin
+)
+assert_contains "$paste_result" '"ok":true' "paste returns JSON success"
+assert_contains "$paste_result" '"pasted_chars":12' "paste reports character count"
+pass "clipboard-safe multiline paste"
 
 CLICLICK=/usr/bin/true CU_DIR="$TMP/state" "$CU" scroll top 2 >/dev/null
 pass "keyboard scroll fallback"
@@ -101,5 +121,38 @@ display_click=$(
 assert_contains "$display_click" 'PRESSED (OCRClick)' "display OCR reports click"
 assert_contains "$(cat "$display_click_log")" 'c:50,15' "display OCR can click app menu text"
 pass "display OCR menu fallback"
+
+observation=$(
+  CU_DIR="$TMP/runtime-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" \
+  CU_SIPS="$ROOT/tests/fixtures/mock-sips" \
+  "$CU" observe Demo --json
+)
+assert_contains "$observation" '"snapshot":"s_' "observe returns snapshot ID"
+assert_contains "$observation" '"source":"native_ax"' "observe uses native AX"
+assert_contains "$observation" '"id":"e_1"' "observe returns stable element handles"
+snapshot=$(print -r -- "$observation" | sed -n 's/.*"snapshot":"\([^"]*\)".*/\1/p')
+runtime_action=$(
+  CU_DIR="$TMP/runtime-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" \
+  CU_SIPS="$ROOT/tests/fixtures/mock-sips" \
+  "$CU" act e_1 --snapshot "$snapshot" --json
+)
+assert_contains "$runtime_action" '"action":"AXPress"' "act uses native AX action"
+assert_contains "$runtime_action" '"verification":{"available":true,"changed":false' "act automatically verifies"
+pass "observe/act runtime"
+
+if stale=$(
+  CU_DIR="$TMP/runtime-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_MOCK_WINDOW_ID=99 \
+  "$CU" act e_1 --snapshot "$snapshot" --json
+); then
+  fail "act rejects a stale window snapshot"
+fi
+assert_contains "$stale" '"code":"stale_snapshot"' "stale snapshot has structured error"
+pass "stale snapshot rejection"
 
 print -r -- "all tests passed"

@@ -1,7 +1,8 @@
 #!/bin/zsh
+mock_window_id="${CU_MOCK_WINDOW_ID:-42}"
 case "${1:-}" in
   bounds|activate)
-    print -r -- $'42\t4242\t100\t200\t800\t600\tDemo\tDemo Window'
+    print -r -- "${mock_window_id}"$'\t4242\t100\t200\t800\t600\tDemo\tDemo Window'
     ;;
   ocr)
     if [[ "${CU_MOCK_OCR_MODE:-}" == display-only && "${3:-}" == 0 && "${4:-}" == 0 ]]; then
@@ -12,10 +13,30 @@ case "${1:-}" in
     fi
     ;;
   windows)
-    print -r -- $'42\t4242\t100\t200\t800\t600\tDemo\tDemo Window'
+    print -r -- "${mock_window_id}"$'\t4242\t100\t200\t800\t600\tDemo\tDemo Window'
     ;;
   display)
     print -r -- $'1\t0\t0\t1440\t900'
+    ;;
+  app-info)
+    print -r -- $'4242\tDemo\tcom.example.Demo'
+    ;;
+  ax-status)
+    print -r -- 'trusted'
+    ;;
+  ax-tree)
+    print -r -- $'w0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress'
+    print -r -- $'w0.1\tAXButton\tSave\t225\t235\t60\t30\tAXPress'
+    ;;
+  ax-perform)
+    print -r -- 'AXPress'
+    ;;
+  fingerprint)
+    print -r -- "${CU_MOCK_FINGERPRINT:-abc123}"
+    ;;
+  paste)
+    [[ -f "${2:-}" ]] || exit 65
+    print -r -- 'pasted'
     ;;
   *) exit 64 ;;
 esac
