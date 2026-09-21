@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.3 - 2026-09-21
+
+### Fixed
+
+- Preserved tab-delimited native context records while parsing `observe`, so the
+  single-call semantic fast path is used rather than silently falling back.
+
 ## 0.2.2 - 2026-09-21
 
 ### Added

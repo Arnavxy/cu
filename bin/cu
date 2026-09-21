@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.2.2"
+CU_VERSION="0.2.3"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -647,7 +647,13 @@ cmd_observe() {
 
   local source ax_output ocr_output line element_path role name ex ey ew eh actions confidence id count=0
   if [[ "$context_meta" == META$'\t'* ]]; then
-    ax_output=$(print -r -- "$context" | awk -F '\t' '$1 == "AX" { $1=""; sub(/^\t/, ""); print }')
+    # Preserve the tab-delimited native protocol. Assigning $1 and printing $0
+    # would rebuild it with awk's default (space) output separator.
+    ax_output=$(print -r -- "$context" | awk -F '\t' '
+      $1 == "AX" {
+        for (i = 2; i <= NF; i++) printf "%s%s", $i, (i < NF ? "\t" : ORS)
+      }
+    ')
   elif (( all )); then
     ax_output=$("$NATIVE" ax-tree "$app" 2>/dev/null) || ax_output=""
   else

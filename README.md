@@ -247,6 +247,7 @@ timings.
 
 ```bash
 ./tests/test_cu.zsh
+./tests/benchmark.zsh
 zsh -n bin/cu scripts/*.zsh tests/*.zsh
 ./scripts/build-native.zsh
 ```

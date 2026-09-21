@@ -3,7 +3,7 @@
 mock_window_id="${CU_MOCK_WINDOW_ID:-42}"
 case "${1:-}" in
   context)
-    print -r -- "META\t${mock_window_id}\t4242\t100\t200\t800\t600\tDemo\tDemo Window\tcom.example.Demo"
+    printf 'META\t%s\t4242\t100\t200\t800\t600\tDemo\tDemo Window\tcom.example.Demo\n' "$mock_window_id"
     print -r -- $'AX\tw0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress'
     print -r -- $'AX\tw0.1\tAXButton\tSave\t225\t235\t60\t30\tAXPress'
     ;;
