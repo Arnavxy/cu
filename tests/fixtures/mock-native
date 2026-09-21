@@ -1,0 +1,21 @@
+#!/bin/zsh
+case "${1:-}" in
+  bounds|activate)
+    print -r -- $'42\t4242\t100\t200\t800\t600\tDemo\tDemo Window'
+    ;;
+  ocr)
+    if [[ "${CU_MOCK_OCR_MODE:-}" == display-only && "${3:-}" == 0 && "${4:-}" == 0 ]]; then
+      print -r -- $'File\t50\t15\t25\t15\t0.990'
+    else
+      print -r -- $'Save\t150\t250\t50\t20\t0.990'
+      print -r -- $'Cancel\t250\t250\t60\t20\t0.980'
+    fi
+    ;;
+  windows)
+    print -r -- $'42\t4242\t100\t200\t800\t600\tDemo\tDemo Window'
+    ;;
+  display)
+    print -r -- $'1\t0\t0\t1440\t900'
+    ;;
+  *) exit 64 ;;
+esac

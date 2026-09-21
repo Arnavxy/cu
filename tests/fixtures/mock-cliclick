@@ -1,0 +1,3 @@
+#!/bin/zsh
+[[ -n "${CU_MOCK_CLICK_LOG:-}" ]] && print -r -- "$*" >> "$CU_MOCK_CLICK_LOG"
+[[ "${1:-}" == "-V" ]] && print -r -- "mock-cliclick 1.0"

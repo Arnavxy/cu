@@ -1,2 +1,5 @@
 #!/bin/zsh
+if [[ -n "${CU_MOCK_OSASCRIPT_CAPTURE:-}" ]]; then
+  /usr/bin/tee "$CU_MOCK_OSASCRIPT_CAPTURE" >/dev/null
+fi
 print -r -- "${CU_MOCK_OSASCRIPT_RESULT:-}"

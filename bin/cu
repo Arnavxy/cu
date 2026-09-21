@@ -4,8 +4,16 @@
 set -u
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS"
-CLICLICK="${CLICLICK:-/opt/homebrew/bin/cliclick}"
+SCRIPT_DIR="${0:A:h}"
+if [[ -z "${CLICLICK:-}" ]]; then
+  CLICLICK="$(command -v cliclick 2>/dev/null || true)"
+  [[ -n "$CLICLICK" ]] || CLICLICK="/opt/homebrew/bin/cliclick"
+  [[ -x "$CLICLICK" ]] || CLICLICK="/usr/local/bin/cliclick"
+fi
 OSASCRIPT="${CU_OSASCRIPT:-/usr/bin/osascript}"
+NATIVE="${CU_NATIVE:-$SCRIPT_DIR/cu-native}"
+SCREENCAPTURE="${CU_SCREENCAPTURE:-/usr/sbin/screencapture}"
+SIPS="${CU_SIPS:-/usr/bin/sips}"
 KEEP_SHOTS="${CU_KEEP_SHOTS:-20}"
 JSON_MODE=0
 
@@ -29,6 +37,7 @@ as_escape() {
   print -rn -- "$s"
 }
 need_cliclick() { [[ -x "$CLICLICK" ]] || die "cliclick not found at $CLICLICK (brew install cliclick)"; }
+native_available() { [[ -x "$NATIVE" ]]; }
 need_accessibility() {
   local out
   out=$("$OSASCRIPT" -e 'tell application "System Events" to count of every process' 2>&1) || die "Accessibility permission is unavailable. Grant it to your terminal under System Settings > Privacy & Security > Accessibility. ($out)"
@@ -37,7 +46,7 @@ need_accessibility() {
 logical_w() { "$OSASCRIPT" -e 'tell application "Finder" to get bounds of window of desktop' | awk -F', *' '{print $3}'; }
 logical_h() { "$OSASCRIPT" -e 'tell application "Finder" to get bounds of window of desktop' | awk -F', *' '{print $4}'; }
 
-win_bounds() {
+ax_win_bounds() {
   "$OSASCRIPT" <<OSA 2>/dev/null
 tell application "System Events"
   tell process "$(as_escape "$1")"
@@ -47,6 +56,33 @@ tell application "System Events"
   end tell
 end tell
 OSA
+}
+
+# CoreGraphics fallback. Emits tab-separated:
+# window_id pid x y width height app title
+native_window() {
+  native_available || return 1
+  "$NATIVE" bounds "$1" 2>/dev/null
+}
+
+win_bounds() {
+  local app="$1" b row id pid x y w h owner title
+  b=$(ax_win_bounds "$app")
+  if [[ "$b" =~ '^-?[0-9]+,-?[0-9]+,[0-9]+,[0-9]+$' ]]; then
+    print -r -- "$b"
+    return 0
+  fi
+  row=$(native_window "$app") || return 1
+  IFS=$'\t' read -r id pid x y w h owner title <<< "$row"
+  [[ -n "$x" && -n "$y" && -n "$w" && -n "$h" ]] || return 1
+  print -r -- "$x,$y,$w,$h"
+}
+
+activate_app() {
+  local app="$1"
+  if native_available && "$NATIVE" activate "$app" >/dev/null 2>&1; then return 0; fi
+  local app_as; app_as=$(as_escape "$app")
+  "$OSASCRIPT" -e "tell application \"$app_as\" to activate" >/dev/null 2>&1
 }
 
 # keep only the newest $KEEP_SHOTS images
@@ -69,23 +105,25 @@ cmd_shot() {
   warn "screenshots may contain private data; storing output under $SHOTS"
   local raw="$SHOTS/${name}.raw.png" out="$SHOTS/${name}.png"
   if [[ -n "$win" ]]; then
+    activate_app "$win" || true
+    sleep 0.2
     local b; b=$(win_bounds "$win")
     [[ -n "$b" ]] || die "no front window for '$win'"
     local x=${b%%,*}; local rest=${b#*,}; local y=${rest%%,*}
     rest=${rest#*,}; local w=${rest%%,*}; local h=${rest##*,}
-    screencapture -x -o -R"${x},${y},${w},${h}" "$raw" || die "screencapture failed"
-    sips --resampleWidth "$w" "$raw" --out "$out" >/dev/null 2>&1 || cp "$raw" "$out"
+    "$SCREENCAPTURE" -x -o -R"${x},${y},${w},${h}" "$raw" || die "screencapture failed"
+    "$SIPS" --resampleWidth "$w" "$raw" --out "$out" >/dev/null 2>&1 || cp "$raw" "$out"
     print -r -- "window : $win  origin=${x},${y}  size=${w}x${h}"
     print -r -- "NOTE   : image coords are WINDOW-relative; add origin before cu click"
   else
-    screencapture -x -o "$raw" || die "screencapture failed"
+    "$SCREENCAPTURE" -x -o "$raw" || die "screencapture failed"
     local lw; lw=$(logical_w)
-    local pw; pw=$(sips -g pixelWidth "$raw" | awk '/pixelWidth/{print $2}')
-    sips --resampleWidth "$lw" "$raw" --out "$out" >/dev/null 2>&1 || cp "$raw" "$out"
+    local pw; pw=$("$SIPS" -g pixelWidth "$raw" | awk '/pixelWidth/{print $2}')
+    "$SIPS" --resampleWidth "$lw" "$raw" --out "$out" >/dev/null 2>&1 || cp "$raw" "$out"
     print -r -- "screen : ${lw}x$(logical_h) pt   captured: ${pw}px   scale: $(( pw / lw ))x"
   fi
   rm -f "$raw"
-  local d; d=$(sips -g pixelWidth -g pixelHeight "$out" | awk '/pixel/{printf "%s ",$2}')
+  local d; d=$("$SIPS" -g pixelWidth -g pixelHeight "$out" | awk '/pixel/{printf "%s ",$2}')
   print -r -- "image  : $out  (${d% })"
   log "shot $out"
   prune
@@ -135,7 +173,7 @@ end walkEl
 tell application "System Events"
   if not (exists process "$app_as") then return "ERR: process '$app_as' is not running"
 end tell
-tell application "$app_as" to activate
+tell application "System Events" to tell process "$app_as" to set frontmost to true
 set wc to 0
 repeat 10 times
   delay 0.3
@@ -160,7 +198,73 @@ return walkEl(w, 0)
 OSA
 }
 
-INTERACTIVE='^(AXButton|AXRadioButton|AXCheckBox|AXTextField|AXTextArea|AXMenuButton|AXMenuItem|AXPopUpButton|AXLink|AXCell|AXRow|AXComboBox|AXSlider|AXTabGroup|AXDisclosureTriangle)'
+_ocr_rect() {
+  local x="$1" y="$2" w="$3" h="$4" label="$5"
+  local nonce="$$.$RANDOM"
+  local raw="$SHOTS/ocr.$nonce.raw.png" image="$SHOTS/ocr.$nonce.png"
+  "$SCREENCAPTURE" -x -o -R"${x},${y},${w},${h}" "$raw" 2>/dev/null
+  [[ -s "$raw" ]] || { print -r -- "ERR: screenshot failed; grant Screen Recording permission"; return 1; }
+  "$SIPS" --resampleWidth "$w" "$raw" --out "$image" >/dev/null 2>&1 || cp "$raw" "$image"
+  rm -f "$raw"
+  local ocr_out
+  ocr_out=$("$NATIVE" ocr "$image" "$x" "$y" 2>&1)
+  local ocr_status=$?
+  (( ocr_status == 0 )) || { rm -f "$image"; print -r -- "ERR: $ocr_out"; return 1; }
+  local text cx cy ow oh confidence found=0
+  while IFS=$'\t' read -r text cx cy ow oh confidence; do
+    [[ -n "$text" && -n "$cx" && -n "$cy" ]] || continue
+    print -r -- "AXOCRText | $text | $cx,$cy"
+    found=1
+  done <<< "$ocr_out"
+  rm -f "$image"
+  (( found )) || { print -r -- "ERR: OCR found no text in '$label'"; return 1; }
+}
+
+_ocr_raw() {
+  local app="$1"
+  native_available || { print -r -- "ERR: native OCR helper is unavailable (run scripts/build-native.zsh)"; return 1; }
+  activate_app "$app" || true
+  sleep 0.2
+  local b; b=$(win_bounds "$app") || { print -r -- "ERR: no AX or CoreGraphics window matched '$app'"; return 1; }
+  local x=${b%%,*}; local rest=${b#*,}; local y=${rest%%,*}
+  rest=${rest#*,}; local w=${rest%%,*}; local h=${rest##*,}
+  _ocr_rect "$x" "$y" "$w" "$h" "$app"
+}
+
+_ocr_display_raw() {
+  local app="$1" row display x y w h
+  native_available || { print -r -- "ERR: native OCR helper is unavailable"; return 1; }
+  activate_app "$app" || true
+  sleep 0.2
+  row=$("$NATIVE" display "$app" 2>/dev/null) || { print -r -- "ERR: no display matched '$app'"; return 1; }
+  IFS=$'\t' read -r display x y w h <<< "$row"
+  _ocr_rect "$x" "$y" "$w" "$h" "$app display"
+}
+
+INTERACTIVE='^(AXButton|AXRadioButton|AXCheckBox|AXTextField|AXTextArea|AXMenuButton|AXMenuItem|AXPopUpButton|AXLink|AXCell|AXRow|AXComboBox|AXSlider|AXTabGroup|AXDisclosureTriangle|AXOCRText)'
+
+filter_tree() {
+  local out="$1" all="$2" filter="$3" role="$4" res
+  if [[ $all -eq 1 ]]; then res="$out"; else res=$(print -r -- "$out" | grep -E "$INTERACTIVE"); fi
+  [[ -n "$filter" ]] && res=$(print -r -- "$res" | grep -iF -- "$filter")
+  [[ -n "$role" ]] && res=$(print -r -- "$res" | awk -F' *\| *' -v wanted="$role" '$1 == wanted')
+  print -r -- "$res"
+}
+
+match_ocr_text() {
+  local out="$1" target="$2" role name xy name_l target_l="${(L)target}"
+  local -a exact partial
+  while IFS='|' read -r role name xy; do
+    role="${role##[[:space:]]}"; role="${role%%[[:space:]]}"
+    name="${name##[[:space:]]}"; name="${name%%[[:space:]]}"
+    xy="${xy##[[:space:]]}"; xy="${xy%%[[:space:]]}"
+    [[ "$role" == AXOCRText && -n "$name" && -n "$xy" ]] || continue
+    name_l="${(L)name}"
+    [[ "$name_l" == "$target_l" ]] && exact+=("$xy"$'\t'"$name")
+    [[ "$name_l" == *"$target_l"* ]] && partial+=("$xy"$'\t'"$name")
+  done <<< "$out"
+  if (( ${#exact} > 0 )); then print -rl -- "${exact[@]}"; else print -rl -- "${partial[@]}"; fi
+}
 
 cmd_tree() {
   [[ $# -ge 1 ]] || die "usage: cu tree \"App Name\" [filter] [--all]"
@@ -174,20 +278,26 @@ cmd_tree() {
       *) filter="$1"; shift ;;
     esac
   done
-  need_accessibility
-  local out; out=$(_tree_raw "$app")
+  local out source="ax" res
+  out=$(_tree_raw "$app")
+  if [[ "$out" == ERR:* || "$out" == *"execution error"* || "$out" == *"Connection invalid"* ]]; then
+    source="ocr"
+    out=$(_ocr_raw "$app")
+  fi
+  res=$(filter_tree "$out" "$all" "$filter" "$role")
+  if [[ -z "$res" && "$source" == ax && ( -z "$role" || "$role" == AXOCRText ) ]]; then
+    source="ocr"
+    out=$(_ocr_raw "$app")
+    res=$(filter_tree "$out" "$all" "$filter" "$role")
+  fi
   case "$out" in ERR:*) (( json )) && json_error "$out" || print -r -- "$out"; return 1 ;; esac
-  local res
-  if [[ $all -eq 1 ]]; then res="$out"; else res=$(print -r -- "$out" | grep -E "$INTERACTIVE"); fi
-  [[ -n "$filter" ]] && res=$(print -r -- "$res" | grep -i -- "$filter")
-  [[ -n "$role" ]] && res=$(print -r -- "$res" | awk -F' *\| *' -v wanted="$role" '$1 == wanted')
   if [[ -z "$res" ]]; then
     (( json )) && { print -r -- '{"ok":true,"app":'"$(json_string "$app")"',"elements":[]}'; return 0; }
     print -r -- "(no matching elements — try --all, or a different filter)"
     return 1
   fi
   if (( json )); then
-    print -rn -- '{"ok":true,"app":'; json_string "$app"; print -rn -- ',"elements":['
+    print -rn -- '{"ok":true,"app":'; json_string "$app"; print -rn -- ',"source":'; json_string "$source"; print -rn -- ',"elements":['
     local first=1 line r nm xy x y
     while IFS='|' read -r r nm xy; do
       r="${r##[[:space:]]}"; r="${r%%[[:space:]]}"
@@ -200,7 +310,7 @@ cmd_tree() {
   else
     print -r -- "$res"
   fi
-  log "tree $app ${filter:-}"
+  log "tree $app ${filter:-} source=$source"
 }
 
 cmd_find() { [[ $# -ge 2 ]] || die "usage: cu find \"App Name\" \"text\""; cmd_tree "$1" "$2"; }
@@ -245,7 +355,7 @@ end collectMatches
 tell application "System Events"
   if not (exists process "$app_as") then return "ERR: process '$app_as' is not running"
 end tell
-tell application "$app_as" to activate
+tell application "System Events" to tell process "$app_as" to set frontmost to true
 set wc to 0
 repeat 10 times
   delay 0.3
@@ -268,30 +378,81 @@ tell application "System Events"
 end tell
 set matches to collectMatches(w, 0, "$target_as", "$role_as", {})
 set matchCount to count of matches
+set chosenIndex to $wanted_index
   if matchCount is 0 then return "ERR: no matching element named '$target_as'"
-  if $wanted_index is 0 and matchCount > 1 then return "ERR: selector matched " & matchCount & " elements; add --role and/or --index"
-  if $wanted_index is 0 then set wanted_index to 1
-  if $wanted_index < 1 or $wanted_index > matchCount then return "ERR: selector matched " & matchCount & " element(s); index $wanted_index is out of range"
-set child to item $wanted_index of matches
-set r to "?"
-try
-  set r to (role of child) as text
-end try
-set nm to "$target_as"
-try
-  perform action "AXPress" of child
-  return "PRESSED (AXPress) " & r & " | " & nm & " | matches=" & matchCount
-end try
-try
-  perform action "AXOpen" of child
-  return "PRESSED (AXOpen) " & r & " | " & nm & " | matches=" & matchCount
-end try
-try
-  click child
-  return "PRESSED (click) " & r & " | " & nm & " | matches=" & matchCount
-end try
+  if chosenIndex is 0 and matchCount > 1 then return "ERR: selector matched " & matchCount & " elements; add --role and/or --index"
+  if chosenIndex is 0 then set chosenIndex to 1
+  if chosenIndex < 1 or chosenIndex > matchCount then return "ERR: selector matched " & matchCount & " element(s); index " & chosenIndex & " is out of range"
+set child to item chosenIndex of matches
+tell application "System Events"
+  set r to "?"
+  try
+    set r to (role of child) as text
+  end try
+  set nm to "$target_as"
+  try
+    perform action "AXPress" of child
+    return "PRESSED (AXPress) " & r & " | " & nm & " | matches=" & matchCount
+  end try
+  try
+    perform action "AXOpen" of child
+    return "PRESSED (AXOpen) " & r & " | " & nm & " | matches=" & matchCount
+  end try
+  try
+    click child
+    return "PRESSED (click) " & r & " | " & nm & " | matches=" & matchCount
+  end try
+end tell
 return "FOUND but no supported action: " & r & " | " & nm & " | matches=" & matchCount
 OSA
+}
+
+_click_text_fallback() {
+  local app="$1" target="$2" wanted_index="${3:-0}" wanted_role="${4:-}"
+  [[ -z "$wanted_role" || "$wanted_role" == AXOCRText ]] || { print -r -- "ERR: AX failed and OCR cannot verify role '$wanted_role'; use clicktext or omit --role"; return 1; }
+  need_cliclick
+  local out scope="window"; out=$(_ocr_raw "$app")
+  case "$out" in ERR:*) print -r -- "$out"; return 1 ;; esac
+  local source_bounds; source_bounds=$(win_bounds "$app") || { print -r -- "ERR: target window disappeared after OCR"; return 1; }
+
+  local matched; matched=$(match_ocr_text "$out" "$target")
+  local -a matches
+  if [[ -n "$matched" ]]; then matches=("${(@f)matched}"); else matches=(); fi
+  if (( ${#matches} == 0 )); then
+    scope="display"
+    out=$(_ocr_display_raw "$app")
+    case "$out" in ERR:*) print -r -- "$out"; return 1 ;; esac
+    matched=$(match_ocr_text "$out" "$target")
+    if [[ -n "$matched" ]]; then matches=("${(@f)matched}"); else matches=(); fi
+  fi
+  local count=${#matches}
+  (( count > 0 )) || { print -r -- "ERR: OCR found no text containing '$target'"; return 1; }
+  if (( wanted_index == 0 && count > 1 )); then
+    print -r -- "ERR: OCR text matched $count elements; add --index"
+    return 1
+  fi
+  (( wanted_index == 0 )) && wanted_index=1
+  (( wanted_index >= 1 && wanted_index <= count )) || { print -r -- "ERR: OCR text matched $count element(s); index $wanted_index is out of range"; return 1; }
+
+  local selected="${matches[$wanted_index]}" coord="${matches[$wanted_index]%%$'\t'*}" matched_name="${matches[$wanted_index]#*$'\t'}"
+  local cx=${coord%%,*} cy=${coord##*,}
+  activate_app "$app" || true
+  sleep 0.1
+  local b bx by bw bh rest display obx oby obw obh
+  if [[ "$scope" == window ]]; then
+    b=$(win_bounds "$app") || { print -r -- "ERR: target window disappeared before click"; return 1; }
+    bx=${b%%,*}; rest=${b#*,}; by=${rest%%,*}; rest=${rest#*,}; bw=${rest%%,*}; bh=${rest##*,}
+    obx=${source_bounds%%,*}; rest=${source_bounds#*,}; oby=${rest%%,*}; rest=${rest#*,}; obw=${rest%%,*}; obh=${rest##*,}
+    # Preserve the recognized point relative to the app window if it moved
+    # between capture and input delivery.
+    cx=$(( bx + cx - obx )); cy=$(( by + cy - oby ))
+  else
+    b=$("$NATIVE" display "$app" 2>/dev/null) || { print -r -- "ERR: target display disappeared before click"; return 1; }
+    IFS=$'\t' read -r display bx by bw bh <<< "$b"
+  fi
+  (( cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh )) || { print -r -- "ERR: OCR target moved outside the current window; retry the command"; return 1; }
+  "$CLICLICK" "c:$cx,$cy" >/dev/null
+  print -r -- "PRESSED (OCRClick) AXOCRText | $matched_name | matches=$count"
 }
 
 # click an element by its accessible name — no coordinates, no screenshot
@@ -306,9 +467,11 @@ cmd_clickel() {
       *) die "unknown clickel option '$1'" ;;
     esac
   done
-  [[ "$index" == <-> && "$index" -gt 0 ]] || die "--index must be a positive integer"
-  need_accessibility
+  [[ "$index" == <-> ]] || die "--index must be a non-negative integer"
   local res; res=$(_press "$app" "$target" "$role" "$index")
+  if [[ -z "$res" || "$res" == ERR:* || "$res" == *"execution error"* || "$res" == *"syntax error"* || "$res" == *"Connection invalid"* ]]; then
+    res=$(_click_text_fallback "$app" "$target" "$index" "$role")
+  fi
   if (( json )); then
     case "$res" in
       ERR:*|FOUND*) json_error "$res"; return 1 ;;
@@ -319,6 +482,30 @@ cmd_clickel() {
   fi
   log "clickel $app '$target' role=${role:-*} index=$index -> $res"
   case "$res" in ERR:*|FOUND*) return 1 ;; esac
+}
+
+cmd_clicktext() {
+  [[ $# -ge 2 ]] || die "usage: cu clicktext \"App Name\" \"visible text\" [--index N] [--json]"
+  local app="$1" target="$2" index=0 json=$JSON_MODE; shift 2
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --index) [[ $# -ge 2 ]] || die "--index requires a number"; index="$2"; shift 2 ;;
+      --json) json=1; JSON_MODE=1; shift ;;
+      *) die "unknown clicktext option '$1'" ;;
+    esac
+  done
+  [[ "$index" == <-> ]] || die "--index must be a non-negative integer"
+  local res command_status; res=$(_click_text_fallback "$app" "$target" "$index" ""); command_status=$?
+  if (( json )); then
+    case "$res" in
+      ERR:*) json_error "$res"; return 1 ;;
+      *) print -rn -- '{"ok":true,"source":"ocr","app":'; json_string "$app"; print -rn -- ',"text":'; json_string "$target"; print -rn -- ',"result":'; json_string "$res"; print -r -- '}' ;;
+    esac
+  else
+    print -r -- "$res"
+  fi
+  log "clicktext $app '$target' index=$index -> $res"
+  (( command_status == 0 ))
 }
 
 cmd_click()  { need_cliclick; "$CLICLICK" "c:$1,$2";  log "click $1,$2"; print -r -- "clicked $1,$2"; }
@@ -388,8 +575,17 @@ cmd_diff() {
   else print -r -- "CHANGED — $(stat -f%z "$a") vs $(stat -f%z "$b") bytes"; fi
 }
 
-cmd_apps() { need_accessibility; "$OSASCRIPT" -e 'tell application "System Events" to get name of every process whose background only is false'; }
-cmd_open() { [[ $# -ge 1 ]] || die 'usage: cu open "App"'; local app_as; app_as=$(as_escape "$1"); "$OSASCRIPT" -e "tell application \"$app_as\" to activate" || die "could not activate '$1'"; log "activate $1"; print -r -- "activated $1"; }
+cmd_apps() {
+  local out
+  out=$("$OSASCRIPT" -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null) && { print -r -- "$out"; return; }
+  native_available || die "Accessibility is unavailable and the native helper is not built"
+  "$NATIVE" windows | awk -F '\t' '!seen[$7]++ { print $7 }'
+}
+cmd_open() {
+  [[ $# -ge 1 ]] || die 'usage: cu open "App"'
+  activate_app "$1" || /usr/bin/open -a "$1" || die "could not activate '$1'"
+  log "activate $1"; print -r -- "activated $1"
+}
 cmd_bounds() { win_bounds "$1" || die "no window for $1"; }
 
 cmd_clean() {
@@ -401,8 +597,22 @@ cmd_clean() {
 
 cmd_doctor() {
   need_cliclick
-  need_accessibility
   print -r -- "cliclick : $("$CLICLICK" -V)"
+  local ax="unavailable — AX commands will use screenshot/OCR fallback"
+  "$OSASCRIPT" -e 'tell application "System Events" to count of every process' >/dev/null 2>&1 && ax="OK"
+  print -r -- "AX tree  : $ax"
+  if native_available; then
+    print -r -- "native   : OK — CoreGraphics windows + Vision OCR"
+  else
+    print -r -- "native   : MISSING — run scripts/build-native.zsh"
+  fi
+  local capture="$SHOTS/doctor.$$.png"
+  if "$SCREENCAPTURE" -x -o -R0,0,2,2 "$capture" >/dev/null 2>&1 && [[ -s "$capture" ]]; then
+    print -r -- "capture  : OK"
+  else
+    print -r -- "capture  : FAIL — grant Screen Recording to the calling terminal/agent"
+  fi
+  rm -f "$capture"
   local before; before=$("$CLICLICK" p)
   print -r -- "cursor   : $before"
   local tw th; tw=$(( $(logical_w) / 2 )); th=$(( $(logical_h) / 2 ))
@@ -415,7 +625,7 @@ cmd_doctor() {
   done
   "$CLICLICK" "m:${before%%,*},${before##*,}" >/dev/null 2>&1
   if [[ "$after" == "$tw,$th" ]]; then
-    print -r -- "input    : OK — Accessibility granted"
+    print -r -- "input    : OK"
   else
     print -r -- "input    : FAIL — grant Accessibility to your terminal in"
     print -r -- "           System Settings > Privacy & Security > Accessibility"
@@ -441,6 +651,7 @@ SEE (cheap first, image only if needed)
 
 ACT
   cu clickel "App" "Save"     click by name; add --role ROLE --index N for duplicates
+  cu clicktext "App" "Save"   OCR fallback: click visible text without AX
   cu click X Y                also dclick, rclick, move
   cu drag X1 Y1 X2 Y2
   cu type "text"              use --stdin --secret for credentials
@@ -479,6 +690,7 @@ sub="$1"; shift
 case "$sub" in
   shot) cmd_shot "$@" ;;          tree) cmd_tree "$@" ;;
   find) cmd_find "$@" ;;          clickel) cmd_clickel "$@" ;;
+  clicktext) cmd_clicktext "$@" ;;
   click) cmd_click "$@" ;;      dclick) cmd_dclick "$@" ;;
   rclick) cmd_rclick "$@" ;;    move) cmd_move "$@" ;;
   drag) cmd_drag "$@" ;;        type) cmd_type "$@" ;;

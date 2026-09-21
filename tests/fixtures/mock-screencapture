@@ -1,0 +1,3 @@
+#!/bin/zsh
+out="${@[-1]}"
+print -n 'mock image' > "$out"

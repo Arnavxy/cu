@@ -1,0 +1,20 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: zsh -n bin/cu scripts/*.zsh tests/test_cu.zsh tests/fixtures/mock-*
+      - name: Run mocked tests
+        run: ./tests/test_cu.zsh
+      - name: Build native helper
+        run: ./scripts/build-native.zsh
