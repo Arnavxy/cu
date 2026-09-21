@@ -106,6 +106,16 @@ fi
 assert_contains "$bad_click" 'coordinates must be numeric logical points' "click validates coordinates before input"
 pass "coordinate argument validation"
 
+if bad_bounds=$(CU_DIR="$TMP/state" "$CU" --json bounds 2>&1); then
+  fail "bounds without an app is rejected"
+fi
+assert_contains "$bad_bounds" 'usage: cu bounds' "bounds reports a useful missing-app error"
+if bad_scroll=$(CU_DIR="$TMP/state" CLICLICK=/usr/bin/true "$CU" --json scroll down 1 extra 2>&1); then
+  fail "scroll with extra arguments is rejected"
+fi
+assert_contains "$bad_scroll" 'usage: cu scroll' "scroll reports a useful extra-argument error"
+pass "context command validation"
+
 pointer_log="$TMP/pointer.log"
 CU_DIR="$TMP/state" \
   CLICLICK="$ROOT/tests/fixtures/mock-cliclick" \

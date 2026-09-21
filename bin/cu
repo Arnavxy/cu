@@ -913,6 +913,7 @@ cmd_scroll() {
       *) break ;;
     esac
   done
+  [[ $# -le 2 ]] || die 'usage: cu scroll [--app "App"] [--at X Y] up|down|top|bottom [count]'
   local dir="${1:-down}" n="${2:-1}"
   [[ "$n" == <-> && "$n" -gt 0 ]] || die "scroll count must be a positive integer"
   [[ -z "$at_x" || ( "$at_x" =~ '^-?[0-9]+$' && "$at_y" =~ '^-?[0-9]+$' ) ]] || die "scroll coordinates must be integers"
@@ -973,7 +974,10 @@ cmd_open() {
   activate_app "$1" || /usr/bin/open -a "$1" || die "could not activate '$1'"
   log "activate $1"; print -r -- "activated $1"
 }
-cmd_bounds() { win_bounds "$1" || die "no window for $1"; }
+cmd_bounds() {
+  [[ $# -eq 1 && -n "$1" ]] || die 'usage: cu bounds "App"'
+  win_bounds "$1" || die "no window for $1"
+}
 cmd_windows() {
   native_available || die "native helper is required (run scripts/build-native.zsh)"
   [[ $# -le 1 ]] || die 'usage: cu windows ["App"]'
