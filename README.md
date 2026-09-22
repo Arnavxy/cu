@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#requirements)
 
-**A fast, token-aware computer-use runtime for macOS agents.**
+**A fast, token-aware computer-use runtime for macOS agents—complementing Playwright with native macOS Accessibility, mouse, keyboard, OCR, screenshots, and verified actions across arbitrary apps.**
 
 `cu` observes the real macOS desktop, exposes interactive UI elements as compact
 JSON, acts on snapshot-scoped handles, and verifies the result. It gives an
