@@ -124,7 +124,7 @@ def main():
         if request_id is None:
             continue
         if method == "initialize":
-            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.7"}})
+            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.8"}})
         elif method == "tools/list":
             reply(request_id, {"tools": TOOLS})
         elif method == "tools/call":

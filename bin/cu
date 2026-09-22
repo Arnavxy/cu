@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.7"
+CU_VERSION="0.3.8"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -729,10 +729,10 @@ cmd_observe() {
   print -rn -- '{"ok":true,"snapshot":'; json_string "$snapshot"
   print -rn -- ',"created_at":'; print -rn -- "$created"
   print -rn -- ',"source":'; json_string "$source"
-  if (( viewport_limited )); then
-    print -rn -- ',"visibility":{"scope":"current_accessibility_view","may_contain_scrolled_out":true}'
+  if [[ "$source" == native_ax ]]; then
+    print -rn -- ',"visibility":{"scope":"current_accessibility_view","may_contain_scrolled_out":true,"complete":false}'
   else
-    print -rn -- ',"visibility":{"scope":"accessibility_tree","may_contain_scrolled_out":false}'
+    print -rn -- ',"visibility":{"scope":"captured_window","may_contain_scrolled_out":true,"complete":false}'
   fi
   print -rn -- ',"app":{"name":'; json_string "$app_name"; print -rn -- ',"pid":'; print -rn -- "$pid"
   print -rn -- ',"bundle_id":'; json_string "$bundle"; print -rn -- '}'

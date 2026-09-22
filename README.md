@@ -211,10 +211,11 @@ its current window; otherwise the command fails before sending input.
 `observe` removes exact Accessibility mirrors with the same role, name, and
 bounds before assigning snapshot handles. Distinct controls with the same name
 remain available and can still be disambiguated with role, bounds, or index.
-When a snapshot contains a scrollable AX surface, its `visibility` field marks
-the result as the current accessibility viewport and warns that scrolled-out
-content may be absent. Scroll and observe again before concluding that a
-control does not exist.
+Every snapshot includes a conservative `visibility` field. Native AX results
+use `scope: current_accessibility_view` and captured results use
+`scope: captured_window`; both mark `may_contain_scrolled_out: true` and
+`complete: false`, because absence cannot prove that a control does not exist.
+Scroll and observe again before concluding that a control is missing.
 
 Coordinate clicks deliberately use `move → settle → click` instead of a bare
 click event. This adds 35 ms by default and prevents small controls from missing

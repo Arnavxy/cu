@@ -18,7 +18,7 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
 
 1. Activate an existing app with `cu open "App"` when needed.
 2. Start with `cu observe "App" --json --max-elements N`, adding `--name TEXT` or `--role ROLE` when known. Filter the JSON locally to relevant names, roles, and safe read-only values instead of returning a large accessibility tree to the model. Values from editable or password-like controls are intentionally omitted.
-   If `visibility.may_contain_scrolled_out` is true, absence means “not in the current viewport,” not “does not exist”; scroll and observe again before reporting a missing control.
+   `visibility.may_contain_scrolled_out` is conservatively true because AX does not prove offscreen completeness; absence means “not in the current viewport,” not “does not exist.” Scroll and observe again before reporting a missing control.
 3. Prefer a unique semantic element and immediately call `cu act e_N --snapshot s_ID --json`. Treat handles as snapshot-scoped; re-observe after meaningful UI changes.
 4. Check the returned verification object, then observe the expected state or target text. Do not assume a reported click means the intended outcome occurred. For a known dialog/window transition, prefer `cu wait --window APP TITLE [--gone] [--timeout MS]` over a guessed sleep.
    `AXPress` means the Accessibility request was accepted, not necessarily that an app handler ran. `cu act` checks the target semantically before falling back to its fresh center, including when the surrounding window is animated. Treat `visual_activity: animated` with `changed: null` as indeterminate and re-observe the expected state.
