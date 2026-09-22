@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.1"
+CU_VERSION="0.3.2"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -1069,7 +1069,7 @@ batch_validate() {
         esac
       done
       (( text == 1 )) ;;
-    paste) [[ $# -eq 1 && "$1" == --stdin ]] || return 1 ;;
+    paste) return 1 ;;
     key) [[ $# -eq 1 && -n "$1" ]] || return 1 ;;
     combo) [[ $# -ge 2 ]] || return 1 ;;
     clickel|clicktext) [[ $# -ge 2 ]] || return 1 ;;
@@ -1104,7 +1104,7 @@ Read one action per line, validate the complete script, then execute it.
 Blank lines and lines beginning with # are ignored. Quote arguments with zsh
 syntax when they contain spaces.
 
-Actions: click dclick rclick move drag type paste key combo scroll
+Actions: click dclick rclick move drag type key combo scroll
           clickel clicktext open wait act observe find shot
 
 Example:
@@ -1140,7 +1140,7 @@ cmd_batch() {
       click) cmd_click "${parts[@]}" ;; dclick) cmd_dclick "${parts[@]}" ;;
       rclick) cmd_rclick "${parts[@]}" ;; move) cmd_move "${parts[@]}" ;;
       drag) cmd_drag "${parts[@]}" ;; type) cmd_type "${parts[@]}" ;;
-      paste) cmd_paste "${parts[@]}" ;; key) cmd_key "${parts[@]}" ;;
+      key) cmd_key "${parts[@]}" ;;
       combo) cmd_combo "${parts[@]}" ;; scroll) cmd_scroll "${parts[@]}" ;;
       clickel) cmd_clickel "${parts[@]}" ;; clicktext) cmd_clicktext "${parts[@]}" ;;
       open) cmd_open "${parts[@]}" ;; wait) cmd_wait "${parts[@]}" ;;

@@ -226,7 +226,7 @@ printf '%s\n' \
 ```
 
 The complete input is syntax-validated before any action is sent. Supported
-verbs are `click`, `dclick`, `rclick`, `move`, `drag`, `type`, `paste`, `key`,
+verbs are `click`, `dclick`, `rclick`, `move`, `drag`, `type`, `key`,
 `combo`, `scroll`, `clickel`, `clicktext`, `open`, `wait`, `act`, `observe`,
 `find`, and `shot`. This preflight cannot predict an app changing state during
 execution, so semantic waits and snapshot guards still apply.
