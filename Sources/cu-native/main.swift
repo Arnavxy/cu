@@ -497,7 +497,7 @@ case "context":
     guard AXIsProcessTrusted() else { exit(0) }
     for record in axRecords(pid: window.pid, interactiveOnly: interactiveOnly) {
         let f = record.frame.integral
-        print("AX\t\(record.path)\t\(record.role)\t\(clean(record.name))\t\(Int(f.origin.x))\t\(Int(f.origin.y))\t\(Int(f.width))\t\(Int(f.height))\t\(record.actions.joined(separator: ","))")
+        print("AX\t\(record.path)\t\(record.role)\t\(clean(record.name))\t\(Int(f.origin.x))\t\(Int(f.origin.y))\t\(Int(f.width))\t\(Int(f.height))\t\(record.actions.joined(separator: ","))\t\(clean(record.value))")
     }
 
 case "ocr":
