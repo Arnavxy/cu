@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.8"
+CU_VERSION="0.3.9"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -72,14 +72,24 @@ native_window() {
 # or changed, and 2 when AX cannot be read. This is narrower than a full
 # observe, so animated windows get semantic verification without a large tree.
 semantic_target_state() {
-  local app="$1" element_path_arg="$2" role="$3" name="$4" output current
+  local app="$1" element_path_arg="$2" role="$3" name="$4" ex="$5" ey="$6" ew="$7" eh="$8" actions="$9" value="${10}" output current
   output=$("$NATIVE" ax-tree "$app" --all 2>/dev/null) || return 2
   current=$(print -r -- "$output" | awk -F '\t' -v wanted_path="$element_path_arg" '$1 == wanted_path { print; exit }')
   [[ -n "$current" ]] || return 1
-  local current_role current_name
-  IFS=$'\t' read -r _ current_role current_name _ <<< "$current"
-  [[ "$current_role" == "$role" && "$current_name" == "$name" ]] && return 0
+  local current_path current_role current_name cx cy cw ch current_actions current_value
+  IFS=$'\t' read -r current_path current_role current_name cx cy cw ch current_actions current_value <<< "$current"
+  [[ "$current_role" == "$role" && "$current_name" == "$name" && "$cx" == "$ex" && "$cy" == "$ey" && "$cw" == "$ew" && "$ch" == "$eh" && "$current_actions" == "$actions" && "$current_value" == "$value" ]] && return 0
   return 1
+}
+
+fresh_element_center() {
+  local app="$1" element_path_arg="$2" output current x y w h actions value
+  output=$("$NATIVE" ax-tree "$app" --all 2>/dev/null) || return 1
+  current=$(print -r -- "$output" | awk -F '\t' -v wanted_path="$element_path_arg" '$1 == wanted_path { print; exit }')
+  [[ -n "$current" ]] || return 1
+  IFS=$'\t' read -r _ _ _ x y w h actions value <<< "$current"
+  [[ "$x" == <-> && "$y" == <-> && "$w" == <-> && "$h" == <-> ]] || return 1
+  print -r -- "$((x + w / 2)),$((y + h / 2))"
 }
 
 # Activate eagerly, but wait only when a target app has not published a usable
@@ -775,8 +785,8 @@ cmd_act() {
   local element
   element=$(awk -F '\t' -v wanted="$element_id" '$1 == "EL" && $2 == wanted { print; exit }' "$file")
   [[ -n "$element" ]] || { runtime_fail element_not_found "element '$element_id' is not in snapshot '$snapshot'"; return 1; }
-  local source element_path role name ex ey ew eh confidence actions
-  IFS=$'\t' read -r kind element_id source element_path role name ex ey ew eh confidence actions <<< "$element"
+  local source element_path role name ex ey ew eh confidence actions value
+  IFS=$'\t' read -r kind element_id source element_path role name ex ey ew eh confidence actions value <<< "$element"
 
   local current current_id current_pid bx by bw bh owner current_title
   current=$(native_window "$app") || { runtime_fail stale_snapshot "application window disappeared"; return 1; }
@@ -837,16 +847,23 @@ cmd_act() {
           [[ "$before" == "$after" ]] && changed=false || changed=true
         fi
       fi
-      if [[ "$source" == native_ax && "$changed" != true ]]; then
-        semantic_target_state "$app" "$element_path" "$role" "$name"
+      if [[ "$source" == native_ax ]]; then
+        semantic_target_state "$app" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$actions" "$value"
         case $? in
           0) semantic_effect="none" ;;
           1) semantic_effect="changed"; changed=true ;;
           *) semantic_effect="unknown" ;;
         esac
       fi
-      if [[ "$changed" != true && "$semantic_effect" == none && "$source" == native_ax && "$action_result" == AXPress && "${CU_AX_COORDINATE_FALLBACK:-1}" == 1 && -x "$CLICLICK" ]]; then
-        _settled_click "$((expected_x + ew / 2))" "$((expected_y + eh / 2))" c >/dev/null
+      if [[ "$changed" != true && "$semantic_effect" != changed && "$source" == native_ax && "$action_result" == AXPress* && "${CU_AX_COORDINATE_FALLBACK:-1}" == 1 && -x "$CLICLICK" ]]; then
+        local fresh_center fallback_x fallback_y
+        fresh_center=$(fresh_element_center "$app" "$element_path" 2>/dev/null) || fresh_center=""
+        if [[ "$fresh_center" =~ '^[0-9]+,[0-9]+$' ]]; then
+          fallback_x=${fresh_center%%,*}; fallback_y=${fresh_center##*,}
+        else
+          fallback_x=$((expected_x + ew / 2)); fallback_y=$((expected_y + eh / 2))
+        fi
+        _settled_click "$fallback_x" "$fallback_y" c >/dev/null
         coordinate_fallback="used"
         action_result="AXPress+CoordinateClick"
         sleep "${CU_VERIFY_DELAY:-0.20}"
@@ -858,7 +875,7 @@ cmd_act() {
             [[ "$before" == "$after" ]] && changed=false || changed=true
           fi
         fi
-        semantic_target_state "$app" "$element_path" "$role" "$name"
+        semantic_target_state "$app" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$actions" "$value"
         case $? in
           0) semantic_effect="none" ;;
           1) semantic_effect="changed"; changed=true ;;
