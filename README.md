@@ -204,8 +204,13 @@ Retina scaling are resolved internally through CoreGraphics.
 For coordinate fallback, prefer `cu click --window "App" X Y` when the point
 comes from a window screenshot. cu resolves the current window origin first,
 so moving or resizing the window does not reuse a stale absolute coordinate.
-Use `--app` for an absolute point only when it must be inside the app's current
-window; otherwise the command fails before sending input.
+`--window` activates the app before translating the point. Use `--app` for an
+absolute point only when that app is already frontmost and the point is inside
+its current window; otherwise the command fails before sending input.
+
+`observe` removes exact Accessibility mirrors with the same role, name, and
+bounds before assigning snapshot handles. Distinct controls with the same name
+remain available and can still be disambiguated with role, bounds, or index.
 
 Coordinate clicks deliberately use `move → settle → click` instead of a bare
 click event. This adds 35 ms by default and prevents small controls from missing

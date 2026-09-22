@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.5" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.6" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -176,6 +176,24 @@ relative_click=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native
 assert_contains "$relative_click" 'clicked 110,220' "window-relative click resolves current origin"
 assert_contains "$(cat "$relative_log")" 'm:110,220' "window-relative click sends translated coordinates"
 pass "window-relative coordinate guard"
+
+trailing_flag_log="$TMP/trailing-flag.log"
+trailing_flag=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CLICLICK="$ROOT/tests/fixtures/mock-cliclick" CU_MOCK_CLICK_LOG="$trailing_flag_log" "$CU" click 10 20 --window Demo)
+assert_contains "$trailing_flag" 'clicked 110,220' "click accepts target flags after coordinates"
+if CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CLICLICK="$ROOT/tests/fixtures/mock-cliclick" CU_FRONTMOST_APP=Ghostty "$CU" click --app Demo 110 220 >/dev/null 2>&1; then
+  fail "--app must refuse a non-frontmost target"
+fi
+pass "pointer flag ordering and frontmost guard"
+
+deduped=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CU_MOCK_DUPLICATE=1 "$CU" --json observe Demo --all)
+assert_contains "$deduped" '"id":"e_2"' "observe preserves distinct same-name controls"
+[[ "$deduped" != *'"id":"e_3"'* ]] || fail "observe did not remove exact AX mirrors"
+pass "observe deduplicates AX mirrors"
+
+mcp_output=$(printf '%s\n' 'not json' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | CU_BIN="$CU" python3 "$ROOT/scripts/cu-mcp.py")
+assert_contains "$mcp_output" '"serverInfo"' "MCP accepts NDJSON requests after malformed lines"
+[[ "$mcp_output" != *'Content-Length'* ]] || fail "MCP must emit NDJSON responses"
+pass "NDJSON MCP transport"
 
 paste_result=$(
   print -rn -- $'first\nsecond' | \

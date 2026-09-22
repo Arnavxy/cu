@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.5"
+CU_VERSION="0.3.6"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -673,7 +673,8 @@ cmd_observe() {
   printf 'META\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$snapshot" "$created" "$app_name" "$pid" "$window_id" "$wx" "$wy" "$ww" "$wh" "$bundle" "$title" > "$tmp"
 
-  local source ax_output ocr_output line element_path role name ex ey ew eh actions value confidence id count=0
+  local source ax_output ocr_output line element_path role name ex ey ew eh actions value confidence id count=0 dedupe_key
+  typeset -A observed_elements
   if [[ "$context_meta" == META$'\t'* ]]; then
     # Preserve the tab-delimited native protocol. Assigning $1 and printing $0
     # would rebuild it with awk's default (space) output separator.
@@ -694,6 +695,9 @@ cmd_observe() {
       if (( ! all )) && [[ ! "$role" =~ $INTERACTIVE ]]; then continue; fi
       [[ -z "$role_filter" || "$role" == "$role_filter" ]] || continue
       [[ -z "$name_filter" || "$name" == *"$name_filter"* ]] || continue
+      dedupe_key="$role\x1f$name\x1f$ex\x1f$ey\x1f$ew\x1f$eh"
+      [[ -z "${observed_elements[$dedupe_key]:-}" ]] || continue
+      observed_elements[$dedupe_key]=1
       (( max_elements == 0 || count < max_elements )) || break
       count=$((count + 1)); id="e_$count"; confidence="1.000"
       printf 'EL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -706,6 +710,9 @@ cmd_observe() {
     while IFS=$'\t' read -r name cx cy ew eh confidence; do
       [[ -n "$name" && -n "$cx" && -n "$cy" ]] || continue
       [[ -z "$name_filter" || "$name" == *"$name_filter"* ]] || continue
+      dedupe_key="AXOCRText\x1f$name\x1f$cx\x1f$cy\x1f$ew\x1f$eh"
+      [[ -z "${observed_elements[$dedupe_key]:-}" ]] || continue
+      observed_elements[$dedupe_key]=1
       (( max_elements == 0 || count < max_elements )) || break
       count=$((count + 1)); id="e_$count"; role="AXOCRText"; element_path="-"
       ex=$((cx - ew / 2)); ey=$((cy - eh / 2)); actions="OCRClick"
@@ -868,22 +875,34 @@ cmd_act() {
   log "act snapshot=$snapshot element=$element_id action=$action_result changed=$changed window=$window_state"
 }
 
+frontmost_app() {
+  [[ -n "${CU_FRONTMOST_APP:-}" ]] && { print -r -- "$CU_FRONTMOST_APP"; return; }
+  "$OSASCRIPT" -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null
+}
+
 pointer_prepare() {
-  local app="" relative=0 x y b bx by bw bh rest
-  if [[ "${1:-}" == --window || "${1:-}" == --app ]]; then
-    [[ $# -ge 4 ]] || { print -r -- "usage: cu click [--window|--app] APP X Y" >&2; return 1; }
-    [[ "$1" == --window ]] && relative=1
-    app="$2"; x="$3"; y="$4"
-  else
-    [[ $# -eq 2 ]] || { print -r -- 'usage: cu click X Y' >&2; return 1; }
-    x="$1"; y="$2"
-  fi
+  local app="" mode="" x y b bx by bw bh rest current
+  local -a positionals
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --window|--app) [[ -z "$mode" && $# -ge 2 ]] || die "invalid or repeated pointer target '$1'"; mode="$1"; app="$2"; shift 2 ;;
+      --*) die "unknown click option '$1'" ;;
+      *) positionals+=("$1"); shift ;;
+    esac
+  done
+  [[ ${#positionals} -eq 2 ]] || die 'usage: cu click [--window|--app] APP X Y | cu click X Y'
+  x="${positionals[1]}"; y="${positionals[2]}"
   valid_point "$x" && valid_point "$y" || { print -r -- 'coordinates must be numeric logical points' >&2; return 1; }
   if [[ -n "$app" ]]; then
-    activate_app "$app" || { print -r -- "could not activate '$app'" >&2; return 1; }
+    if [[ "$mode" == --app ]]; then
+      current=$(frontmost_app)
+      [[ "${current:l}" == "${app:l}" ]] || { print -r -- "'$app' is not frontmost (frontmost: '$current'); use cu open '$app' or --window to activate" >&2; return 1; }
+    else
+      activate_app "$app" || { print -r -- "could not activate '$app'" >&2; return 1; }
+    fi
     b=$(win_bounds "$app") || { print -r -- "no visible window matched '$app'" >&2; return 1; }
     bx=${b%%,*}; rest=${b#*,}; by=${rest%%,*}; rest=${rest#*,}; bw=${rest%%,*}; bh=${rest##*,}
-    if (( relative )); then
+    if [[ "$mode" == --window ]]; then
       x=$((bx + x)); y=$((by + y))
     elif (( x < bx || x > bx + bw || y < by || y > by + bh )); then
       print -r -- "coordinates $x,$y are outside the current '$app' window ($b); use --window for relative points" >&2

@@ -19,7 +19,7 @@ TOOLS = [
     {"name": "cu_wait", "description": "Wait for a window, semantic element/value, stability, or visual change.", "inputSchema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["window", "element", "value", "stable", "changed"]}, "app": {"type": "string"}, "target": {"type": "string"}, "role": {"type": "string"}, "gone": {"type": "boolean"}, "timeout_ms": {"type": "integer"}}, "required": ["mode", "app"]}},
     {"name": "cu_batch", "description": "Run a guarded line-oriented cu action batch in one process.", "inputSchema": {"type": "object", "properties": {"script": {"type": "string"}}, "required": ["script"]}},
     {"name": "cu_shot", "description": "Capture a full screen or named app window to a local PNG.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "name": {"type": "string"}}}},
-    {"name": "cu_click", "description": "Click logical macOS screen coordinates with move-settle-click verification input.", "inputSchema": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}},
+    {"name": "cu_click", "description": "Click logical macOS screen coordinates. Supply app to refuse clicks unless that app is frontmost; set window_relative when coordinates came from a window capture.", "inputSchema": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "app": {"type": "string"}, "window_relative": {"type": "boolean"}}, "required": ["x", "y"]}},
     {"name": "cu_clickel", "description": "Click a native Accessibility element by app and accessible name, with role/index disambiguation.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "name": {"type": "string"}, "role": {"type": "string"}, "index": {"type": "integer", "minimum": 0}}, "required": ["app", "name"]}},
     {"name": "cu_type", "description": "Type text into the focused field; use paced for fragile Simulator/custom fields.", "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "paced": {"type": "boolean"}, "interval_ms": {"type": "integer", "minimum": 0}, "secret": {"type": "boolean"}}, "required": ["text"]}},
 ]
@@ -75,7 +75,11 @@ def call_tool(name, arguments):
             args.append(arguments["name"])
         return invoke(args)
     if name == "cu_click":
-        return invoke(["--json", "click", str(arguments["x"]), str(arguments["y"])])
+        args = ["--json", "click"]
+        if arguments.get("app"):
+            args += ["--window" if arguments.get("window_relative") else "--app", arguments["app"]]
+        args += [str(arguments["x"]), str(arguments["y"])]
+        return invoke(args)
     if name == "cu_clickel":
         args = ["--json", "clickel", arguments["app"], arguments["name"]]
         if arguments.get("role"):
@@ -99,23 +103,20 @@ def call_tool(name, arguments):
 def reply(message_id, result=None, error=None):
     payload = {"jsonrpc": "2.0", "id": message_id}
     payload["error" if error else "result"] = error or result
-    raw = json.dumps(payload, separators=(",", ":")).encode()
-    sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw)
-    sys.stdout.buffer.flush()
+    sys.stdout.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
 
 
 def main():
-    while True:
-        headers = {}
-        line = sys.stdin.buffer.readline()
+    for raw_line in sys.stdin:
+        line = raw_line.strip()
         if not line:
-            return
-        while line not in (b"\r\n", b"\n", b""):
-            key, _, value = line.decode().partition(":")
-            headers[key.lower()] = value.strip()
-            line = sys.stdin.buffer.readline()
-        length = int(headers.get("content-length", "0"))
-        request = json.loads(sys.stdin.buffer.read(length))
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            # A malformed request must not take down an agent's tool process.
+            continue
         method = request.get("method")
         request_id = request.get("id")
         if method == "notifications/initialized":
@@ -123,7 +124,7 @@ def main():
         if request_id is None:
             continue
         if method == "initialize":
-            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.5"}})
+            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.6"}})
         elif method == "tools/list":
             reply(request_id, {"tools": TOOLS})
         elif method == "tools/call":
