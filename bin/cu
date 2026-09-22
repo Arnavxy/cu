@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.6"
+CU_VERSION="0.3.7"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -673,7 +673,7 @@ cmd_observe() {
   printf 'META\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$snapshot" "$created" "$app_name" "$pid" "$window_id" "$wx" "$wy" "$ww" "$wh" "$bundle" "$title" > "$tmp"
 
-  local source ax_output ocr_output line element_path role name ex ey ew eh actions value confidence id count=0 dedupe_key
+  local source ax_output ocr_output line element_path role name ex ey ew eh actions value confidence id count=0 dedupe_key viewport_limited=0
   typeset -A observed_elements
   if [[ "$context_meta" == META$'\t'* ]]; then
     # Preserve the tab-delimited native protocol. Assigning $1 and printing $0
@@ -692,6 +692,7 @@ cmd_observe() {
     source="native_ax"
     while IFS=$'\t' read -r element_path role name ex ey ew eh actions value; do
       [[ -n "$element_path" && -n "$role" && -n "$name" ]] || continue
+      [[ "$role" == AXScrollArea || "$role" == AXScrollBar || "$actions" == *AXScrollToVisible* ]] && viewport_limited=1
       if (( ! all )) && [[ ! "$role" =~ $INTERACTIVE ]]; then continue; fi
       [[ -z "$role_filter" || "$role" == "$role_filter" ]] || continue
       [[ -z "$name_filter" || "$name" == *"$name_filter"* ]] || continue
@@ -728,6 +729,11 @@ cmd_observe() {
   print -rn -- '{"ok":true,"snapshot":'; json_string "$snapshot"
   print -rn -- ',"created_at":'; print -rn -- "$created"
   print -rn -- ',"source":'; json_string "$source"
+  if (( viewport_limited )); then
+    print -rn -- ',"visibility":{"scope":"current_accessibility_view","may_contain_scrolled_out":true}'
+  else
+    print -rn -- ',"visibility":{"scope":"accessibility_tree","may_contain_scrolled_out":false}'
+  fi
   print -rn -- ',"app":{"name":'; json_string "$app_name"; print -rn -- ',"pid":'; print -rn -- "$pid"
   print -rn -- ',"bundle_id":'; json_string "$bundle"; print -rn -- '}'
   print -rn -- ',"window":{"id":'; print -rn -- "$window_id"; print -rn -- ',"title":'; json_string "$title"

@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.6" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.7" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -189,6 +189,10 @@ deduped=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CU_MO
 assert_contains "$deduped" '"id":"e_2"' "observe preserves distinct same-name controls"
 [[ "$deduped" != *'"id":"e_3"'* ]] || fail "observe did not remove exact AX mirrors"
 pass "observe deduplicates AX mirrors"
+
+scroll_scope=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CU_MOCK_SCROLLABLE=1 "$CU" --json observe Demo --all)
+assert_contains "$scroll_scope" '"may_contain_scrolled_out":true' "observe reports viewport-limited AX coverage"
+pass "observe visibility scope"
 
 mcp_output=$(printf '%s\n' 'not json' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | CU_BIN="$CU" python3 "$ROOT/scripts/cu-mcp.py")
 assert_contains "$mcp_output" '"serverInfo"' "MCP accepts NDJSON requests after malformed lines"
