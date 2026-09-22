@@ -10,9 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-CU = os.environ.get("CU_BIN") or str(ROOT / "bin" / "cu")
-if not Path(CU).exists():
-    CU = shutil.which("cu") or "cu"
+CU = os.environ.get("CU_BIN") or shutil.which("cu") or str(ROOT / "bin" / "cu")
 
 
 TOOLS = [
@@ -97,7 +95,7 @@ def main():
         if request_id is None:
             continue
         if method == "initialize":
-            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.0"}})
+            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.1"}})
         elif method == "tools/list":
             reply(request_id, {"tools": TOOLS})
         elif method == "tools/call":

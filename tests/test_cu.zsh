@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.0" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.1" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -50,6 +50,20 @@ batch_result=$(printf '%s\n' 'click 10 20' 'key return' | CU_DIR="$TMP/state" CL
 assert_contains "$batch_result" '"actions":2' "batch reports action count"
 assert_contains "$(cat "$batch_log")" 'm:10,20 w:35 c:10,20' "batch preserves guarded click"
 pass "single-process action batch"
+
+batch_guard_log="$TMP/batch-guard.log"
+if printf '%s\n' 'click 10 20' 'not-a-cu-command 3' | \
+  CU_DIR="$TMP/state" CLICLICK="$ROOT/tests/fixtures/mock-cliclick" CU_MOCK_CLICK_LOG="$batch_guard_log" \
+  "$CU" batch --stdin >/dev/null 2>&1; then
+  fail "batch rejects invalid scripts"
+fi
+[[ ! -e "$batch_guard_log" || ! -s "$batch_guard_log" ]] || fail "batch executed before validation"
+pass "batch validates before execution"
+
+batch_help="$($CU batch --help)"
+assert_contains "$batch_help" "observe" "batch help documents read actions"
+assert_contains "$batch_help" "clickel" "batch help documents semantic actions"
+pass "batch help"
 
 tree=$(
   CU_DIR="$TMP/state" \

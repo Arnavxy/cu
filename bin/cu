@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.0"
+CU_VERSION="0.3.1"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -1051,31 +1051,101 @@ cmd_wait() {
   done
 }
 
+batch_validate() {
+  local sub="$1"; shift
+  case "$sub" in
+    click|dclick|rclick|move)
+      [[ $# -eq 2 ]] && valid_point "$1" && valid_point "$2" || return 1 ;;
+    drag)
+      [[ $# -eq 4 ]] && valid_point "$1" && valid_point "$2" && valid_point "$3" && valid_point "$4" || return 1 ;;
+    type)
+      local text=0 interval="${CU_TYPE_INTERVAL_MS:-180}" arg
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --secret|--paced) shift ;;
+          --stdin) return 1 ;;
+          --interval) [[ $# -ge 2 && "$2" == <-> ]] || return 1; interval="$2"; shift 2 ;;
+          *) (( text == 0 )) || return 1; text=1; shift ;;
+        esac
+      done
+      (( text == 1 )) ;;
+    paste) [[ $# -eq 1 && "$1" == --stdin ]] || return 1 ;;
+    key) [[ $# -eq 1 && -n "$1" ]] || return 1 ;;
+    combo) [[ $# -ge 2 ]] || return 1 ;;
+    clickel|clicktext) [[ $# -ge 2 ]] || return 1 ;;
+    open) [[ $# -ge 1 ]] || return 1 ;;
+    observe) [[ $# -ge 1 ]] || return 1 ;;
+    find) [[ $# -ge 2 ]] || return 1 ;;
+    shot) return 0 ;;
+    act) [[ $# -ge 1 ]] || return 1 ;;
+    wait)
+      [[ $# -ge 1 ]] || return 1
+      case "$1" in
+        --element|--value) [[ $# -ge 3 ]] || return 1 ;;
+        --stable|--changed) [[ $# -ge 2 ]] || return 1 ;;
+        --window) [[ $# -ge 4 ]] || return 1 ;;
+        <->) [[ $# -eq 1 ]] || return 1 ;;
+        *) return 1 ;;
+      esac ;;
+    scroll)
+      [[ $# -ge 1 ]] || return 1
+      case "${(j: :)@}" in
+        *' --stdin'*) return 1 ;;
+      esac ;;
+    *) return 1 ;;
+  esac
+}
+
+batch_usage() {
+  cat <<'B'
+usage: cu batch --stdin
+
+Read one action per line, validate the complete script, then execute it.
+Blank lines and lines beginning with # are ignored. Quote arguments with zsh
+syntax when they contain spaces.
+
+Actions: click dclick rclick move drag type paste key combo scroll
+          clickel clicktext open wait act observe find shot
+
+Example:
+  printf '%s\n' \
+    'open "Calculator"' \
+    'wait --window "Calculator" "Calculator" --timeout 1000' \
+    'observe "Calculator" --json' | cu batch --stdin
+
+Batch validates syntax before any input is sent. UI-state errors can still
+occur during execution when an app changes between actions.
+B
+}
+
 cmd_batch() {
-  [[ "${1:-}" == --stdin && $# -eq 1 ]] || die 'usage: cu batch --stdin'
-  local line sub count=0
-  local -a parts
+  if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then batch_usage; return; fi
+  [[ "${1:-}" == --stdin && $# -eq 1 ]] || die 'usage: cu batch --stdin (try: cu batch --help)'
+  local line sub count=0 line_no=0
+  local -a lines parts
   while IFS= read -r line; do
+    line_no=$((line_no + 1))
     [[ -z "${line//[[:space:]]/}" || "${line#\#}" != "$line" ]] && continue
     parts=(${(z)line})
-    [[ ${#parts} -gt 0 ]] || continue
+    (( ${#parts} > 0 )) || continue
     sub="${parts[1]}"; parts=(${parts[@]:1})
+    batch_validate "$sub" "${parts[@]}" || die "batch line $line_no: invalid or unsupported '$sub' action"
+    lines+=("$line")
+  done
+  # The second pass is deliberately separate: no command has run until the
+  # entire input has passed validation.
+  for line in "${lines[@]}"; do
+    parts=(${(z)line}); sub="${parts[1]}"; parts=(${parts[@]:1})
     case "$sub" in
-      click) cmd_click "${parts[@]}" ;;
-      dclick) cmd_dclick "${parts[@]}" ;;
-      rclick) cmd_rclick "${parts[@]}" ;;
-      move) cmd_move "${parts[@]}" ;;
-      drag) cmd_drag "${parts[@]}" ;;
-      type) cmd_type "${parts[@]}" ;;
-      key) cmd_key "${parts[@]}" ;;
-      combo) cmd_combo "${parts[@]}" ;;
-      scroll) cmd_scroll "${parts[@]}" ;;
-      clickel) cmd_clickel "${parts[@]}" ;;
-      clicktext) cmd_clicktext "${parts[@]}" ;;
-      open) cmd_open "${parts[@]}" ;;
-      wait) cmd_wait "${parts[@]}" ;;
-      act) cmd_act "${parts[@]}" ;;
-      *) die "unsupported batch action '$sub'" ;;
+      click) cmd_click "${parts[@]}" ;; dclick) cmd_dclick "${parts[@]}" ;;
+      rclick) cmd_rclick "${parts[@]}" ;; move) cmd_move "${parts[@]}" ;;
+      drag) cmd_drag "${parts[@]}" ;; type) cmd_type "${parts[@]}" ;;
+      paste) cmd_paste "${parts[@]}" ;; key) cmd_key "${parts[@]}" ;;
+      combo) cmd_combo "${parts[@]}" ;; scroll) cmd_scroll "${parts[@]}" ;;
+      clickel) cmd_clickel "${parts[@]}" ;; clicktext) cmd_clicktext "${parts[@]}" ;;
+      open) cmd_open "${parts[@]}" ;; wait) cmd_wait "${parts[@]}" ;;
+      act) cmd_act "${parts[@]}" ;; observe) cmd_observe "${parts[@]}" ;;
+      find) cmd_find "${parts[@]}" ;; shot) cmd_shot "${parts[@]}" ;;
     esac
     count=$((count + 1))
   done
@@ -1244,10 +1314,6 @@ ACT
   cu wait MS                  bounded delay
   cu wait --window APP TITLE [--gone] [--timeout MS]
                               wait for a real window state, not a guess
-  cu wait --element APP NAME [--role ROLE] [--gone] [--timeout MS]
-  cu wait --value APP VALUE [--gone] [--timeout MS]
-  cu wait --stable|--changed APP [--timeout MS]
-  cu batch --stdin            run guarded actions from one process
   cu wait --element APP NAME [--role ROLE] [--gone] [--timeout MS]
   cu wait --value APP VALUE [--gone] [--timeout MS]
   cu wait --stable|--changed APP [--timeout MS]

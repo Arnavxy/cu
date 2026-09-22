@@ -184,7 +184,7 @@ default and cannot be reused against a different process or window.
 | `cu scroll [--app "App"] [--at X Y] up\|down\|top\|bottom [n]` | Target wheel or navigation scrolling at an application and point |
 | `cu wait --element APP NAME` / `--value APP VALUE` | Wait for semantic state |
 | `cu wait --stable APP` / `--changed APP` | Wait for visual state transitions |
-| `cu batch --stdin` | Run guarded actions through one process |
+| `cu batch --stdin` | Validate a complete script, then run actions and reads through one process |
 | `cu color X Y`, `cu diff before after` | Verify visual state without image-model tokens |
 | `cu apps`, `open`, `bounds` | Inspect and activate application context |
 | `cu doctor`, `log`, `clean` | Diagnose, inspect history, and remove screenshots |
@@ -213,6 +213,23 @@ cu scroll --app "DeviceHub" --at 640 500 down 4
 With `--app` and no `--at`, `cu` targets the center of the front application
 window. For touch-style content that does not accept wheel events, use `cu drag`
 to perform the same direct manipulation a user would.
+
+### Batch execution
+
+`batch` keeps the agent hot path in one process and can end with a read:
+
+```sh
+printf '%s\n' \
+  'open "Calculator"' \
+  'wait --window "Calculator" "Calculator" --timeout 1000' \
+  'observe "Calculator" --json' | cu batch --stdin
+```
+
+The complete input is syntax-validated before any action is sent. Supported
+verbs are `click`, `dclick`, `rclick`, `move`, `drag`, `type`, `paste`, `key`,
+`combo`, `scroll`, `clickel`, `clicktext`, `open`, `wait`, `act`, `observe`,
+`find`, and `shot`. This preflight cannot predict an app changing state during
+execution, so semantic waits and snapshot guards still apply.
 
 ## Performance model
 
