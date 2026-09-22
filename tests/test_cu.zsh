@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.2" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.3" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -47,9 +47,15 @@ pass "semantic waits"
 
 batch_log="$TMP/batch.log"
 batch_result=$(printf '%s\n' 'click 10 20' 'key return' | CU_DIR="$TMP/state" CLICLICK="$ROOT/tests/fixtures/mock-cliclick" CU_MOCK_CLICK_LOG="$batch_log" "$CU" --json batch --stdin)
-assert_contains "$batch_result" '"actions":2' "batch reports action count"
+assert_contains "$batch_result" '"actions":[{' "batch reports structured action results"
+assert_contains "$batch_result" '"line":2' "batch includes every action result"
 assert_contains "$(cat "$batch_log")" 'm:10,20 w:35 c:10,20' "batch preserves guarded click"
 pass "single-process action batch"
+
+filtered_observe=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" "$CU" --json observe Demo --all --role AXButton --name Save --max-elements 1)
+assert_contains "$filtered_observe" '"id":"e_1"' "observe supports bounded semantic filters"
+[[ "$filtered_observe" != *'"id":"e_2"'* ]] || fail "observe max-elements was ignored"
+pass "bounded observe filters"
 
 batch_guard_log="$TMP/batch-guard.log"
 if printf '%s\n' 'click 10 20' 'not-a-cu-command 3' | \

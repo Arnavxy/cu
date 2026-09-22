@@ -14,11 +14,14 @@ CU = os.environ.get("CU_BIN") or shutil.which("cu") or str(ROOT / "bin" / "cu")
 
 
 TOOLS = [
-    {"name": "cu_observe", "description": "Observe a macOS app with compact native AX/OCR JSON.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "all": {"type": "boolean"}}, "required": ["app"]}},
+    {"name": "cu_observe", "description": "Observe a macOS app with bounded native AX/OCR JSON. Prefer max_elements and role/name filters on dense screens; use all for overlay/custom controls.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "all": {"type": "boolean"}, "role": {"type": "string"}, "name": {"type": "string"}, "max_elements": {"type": "integer", "minimum": 1}}, "required": ["app"]}},
     {"name": "cu_act", "description": "Act on a snapshot-scoped cu element and verify it.", "inputSchema": {"type": "object", "properties": {"element": {"type": "string"}, "snapshot": {"type": "string"}, "verify": {"type": "boolean", "default": True}}, "required": ["element", "snapshot"]}},
     {"name": "cu_wait", "description": "Wait for a window, semantic element/value, stability, or visual change.", "inputSchema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["window", "element", "value", "stable", "changed"]}, "app": {"type": "string"}, "target": {"type": "string"}, "role": {"type": "string"}, "gone": {"type": "boolean"}, "timeout_ms": {"type": "integer"}}, "required": ["mode", "app"]}},
     {"name": "cu_batch", "description": "Run a guarded line-oriented cu action batch in one process.", "inputSchema": {"type": "object", "properties": {"script": {"type": "string"}}, "required": ["script"]}},
     {"name": "cu_shot", "description": "Capture a full screen or named app window to a local PNG.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "name": {"type": "string"}}}},
+    {"name": "cu_click", "description": "Click logical macOS screen coordinates with move-settle-click verification input.", "inputSchema": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}},
+    {"name": "cu_clickel", "description": "Click a native Accessibility element by app and accessible name, with role/index disambiguation.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "name": {"type": "string"}, "role": {"type": "string"}, "index": {"type": "integer", "minimum": 0}}, "required": ["app", "name"]}},
+    {"name": "cu_type", "description": "Type text into the focused field; use paced for fragile Simulator/custom fields.", "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "paced": {"type": "boolean"}, "interval_ms": {"type": "integer", "minimum": 0}, "secret": {"type": "boolean"}}, "required": ["text"]}},
 ]
 
 
@@ -34,6 +37,12 @@ def call_tool(name, arguments):
         args = ["--json", "observe", arguments["app"]]
         if arguments.get("all"):
             args.append("--all")
+        if arguments.get("role"):
+            args += ["--role", arguments["role"]]
+        if arguments.get("name"):
+            args += ["--name", arguments["name"]]
+        if arguments.get("max_elements") is not None:
+            args += ["--max-elements", str(arguments["max_elements"])]
         return invoke(args)
     if name == "cu_act":
         args = ["--json", "act", arguments["element"], "--snapshot", arguments["snapshot"]]
@@ -65,6 +74,25 @@ def call_tool(name, arguments):
         if arguments.get("name"):
             args.append(arguments["name"])
         return invoke(args)
+    if name == "cu_click":
+        return invoke(["--json", "click", str(arguments["x"]), str(arguments["y"])])
+    if name == "cu_clickel":
+        args = ["--json", "clickel", arguments["app"], arguments["name"]]
+        if arguments.get("role"):
+            args += ["--role", arguments["role"]]
+        if arguments.get("index") is not None:
+            args += ["--index", str(arguments["index"])]
+        return invoke(args)
+    if name == "cu_type":
+        args = ["--json", "type"]
+        if arguments.get("secret"):
+            args.append("--secret")
+        if arguments.get("paced"):
+            args.append("--paced")
+        if arguments.get("interval_ms") is not None:
+            args += ["--interval", str(arguments["interval_ms"])]
+        args.append(arguments["text"])
+        return invoke(args)
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -95,13 +123,18 @@ def main():
         if request_id is None:
             continue
         if method == "initialize":
-            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.2"}})
+            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.3"}})
         elif method == "tools/list":
             reply(request_id, {"tools": TOOLS})
         elif method == "tools/call":
             try:
                 code, output = call_tool(request["params"]["name"], request["params"].get("arguments"))
-                reply(request_id, {"content": [{"type": "text", "text": output}], "isError": code != 0})
+                result = {"content": [{"type": "text", "text": output}], "isError": code != 0}
+                try:
+                    result["structuredContent"] = json.loads(output)
+                except json.JSONDecodeError:
+                    pass
+                reply(request_id, result)
             except Exception as exc:
                 reply(request_id, error={"code": -32602, "message": str(exc)})
         else:

@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.2"
+CU_VERSION="0.3.3"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -635,12 +635,15 @@ runtime_fail() {
 }
 
 cmd_observe() {
-  [[ $# -ge 1 ]] || die 'usage: cu observe "App" [--all] [--json]'
+  [[ $# -ge 1 ]] || die 'usage: cu observe "App" [--all] [--role ROLE] [--name TEXT] [--max-elements N] [--json]'
   local app="$1"; shift
-  local all=0
+  local all=0 role_filter="" name_filter="" max_elements=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --all) all=1; shift ;;
+      --role) [[ $# -ge 2 ]] || die '--role requires a role'; role_filter="$2"; shift 2 ;;
+      --name|--filter) [[ $# -ge 2 ]] || die '--name requires text'; name_filter="$2"; shift 2 ;;
+      --max-elements) [[ $# -ge 2 && "$2" == <-> && "$2" -gt 0 ]] || die '--max-elements must be a positive integer'; max_elements="$2"; shift 2 ;;
       --json) JSON_MODE=1; shift ;;
       *) die "unknown observe option '$1'" ;;
     esac
@@ -689,6 +692,9 @@ cmd_observe() {
     while IFS=$'\t' read -r element_path role name ex ey ew eh actions value; do
       [[ -n "$element_path" && -n "$role" && -n "$name" ]] || continue
       if (( ! all )) && [[ ! "$role" =~ $INTERACTIVE ]]; then continue; fi
+      [[ -z "$role_filter" || "$role" == "$role_filter" ]] || continue
+      [[ -z "$name_filter" || "$name" == *"$name_filter"* ]] || continue
+      (( max_elements == 0 || count < max_elements )) || break
       count=$((count + 1)); id="e_$count"; confidence="1.000"
       printf 'EL\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$id" "$source" "$element_path" "$role" "$name" "$ex" "$ey" "$ew" "$eh" "$confidence" "$actions" "$value" >> "$tmp"
@@ -699,6 +705,8 @@ cmd_observe() {
     local cx cy
     while IFS=$'\t' read -r name cx cy ew eh confidence; do
       [[ -n "$name" && -n "$cx" && -n "$cy" ]] || continue
+      [[ -z "$name_filter" || "$name" == *"$name_filter"* ]] || continue
+      (( max_elements == 0 || count < max_elements )) || break
       count=$((count + 1)); id="e_$count"; role="AXOCRText"; element_path="-"
       ex=$((cx - ew / 2)); ey=$((cy - eh / 2)); actions="OCRClick"
       value=""
@@ -1134,22 +1142,56 @@ cmd_batch() {
   done
   # The second pass is deliberately separate: no command has run until the
   # entire input has passed validation.
+  local batch_failed=0 json_actions_output='{"ok":true,"actions":[' json_first=1 action_output action_rc command_text
   for line in "${lines[@]}"; do
     parts=(${(z)line}); sub="${parts[1]}"; parts=(${parts[@]:1})
-    case "$sub" in
-      click) cmd_click "${parts[@]}" ;; dclick) cmd_dclick "${parts[@]}" ;;
-      rclick) cmd_rclick "${parts[@]}" ;; move) cmd_move "${parts[@]}" ;;
-      drag) cmd_drag "${parts[@]}" ;; type) cmd_type "${parts[@]}" ;;
-      key) cmd_key "${parts[@]}" ;;
-      combo) cmd_combo "${parts[@]}" ;; scroll) cmd_scroll "${parts[@]}" ;;
-      clickel) cmd_clickel "${parts[@]}" ;; clicktext) cmd_clicktext "${parts[@]}" ;;
-      open) cmd_open "${parts[@]}" ;; wait) cmd_wait "${parts[@]}" ;;
-      act) cmd_act "${parts[@]}" ;; observe) cmd_observe "${parts[@]}" ;;
-      find) cmd_find "${parts[@]}" ;; shot) cmd_shot "${parts[@]}" ;;
-    esac
+    command_text="$line"
+    if (( JSON_MODE )); then
+      action_output=$(case "$sub" in
+        click) cmd_click "${parts[@]}" ;; dclick) cmd_dclick "${parts[@]}" ;;
+        rclick) cmd_rclick "${parts[@]}" ;; move) cmd_move "${parts[@]}" ;;
+        drag) cmd_drag "${parts[@]}" ;; type) cmd_type "${parts[@]}" ;;
+        key) cmd_key "${parts[@]}" ;; combo) cmd_combo "${parts[@]}" ;;
+        scroll) cmd_scroll "${parts[@]}" ;; clickel) cmd_clickel "${parts[@]}" ;;
+        clicktext) cmd_clicktext "${parts[@]}" ;; open) cmd_open "${parts[@]}" ;;
+        wait) cmd_wait "${parts[@]}" ;; act) cmd_act "${parts[@]}" ;;
+        observe) cmd_observe "${parts[@]}" ;; find) cmd_find "${parts[@]}" ;;
+        shot) cmd_shot "${parts[@]}" ;;
+      esac 2>&1)
+      action_rc=$?
+      (( json_first )) || json_actions_output+=','; json_first=0
+      json_actions_output+="{\"line\":$((count + 1)),\"command\":"
+      json_actions_output+="$(json_string "$command_text")"
+      json_actions_output+=",\"ok\":"$([[ $action_rc -eq 0 ]] && print -rn -- true || print -rn -- false)
+      if [[ "$action_output" == \{*\} || "$action_output" == \[*\] ]]; then
+        json_actions_output+=",\"result\":$action_output"
+      else
+        json_actions_output+=",\"output\":"$(json_string "$action_output")
+      fi
+      json_actions_output+='}'
+      if (( action_rc != 0 )); then batch_failed=1; break; fi
+    else
+      case "$sub" in
+        click) cmd_click "${parts[@]}" ;; dclick) cmd_dclick "${parts[@]}" ;;
+        rclick) cmd_rclick "${parts[@]}" ;; move) cmd_move "${parts[@]}" ;;
+        drag) cmd_drag "${parts[@]}" ;; type) cmd_type "${parts[@]}" ;;
+        key) cmd_key "${parts[@]}" ;; combo) cmd_combo "${parts[@]}" ;;
+        scroll) cmd_scroll "${parts[@]}" ;; clickel) cmd_clickel "${parts[@]}" ;;
+        clicktext) cmd_clicktext "${parts[@]}" ;; open) cmd_open "${parts[@]}" ;;
+        wait) cmd_wait "${parts[@]}" ;; act) cmd_act "${parts[@]}" ;;
+        observe) cmd_observe "${parts[@]}" ;; find) cmd_find "${parts[@]}" ;;
+        shot) cmd_shot "${parts[@]}" ;;
+      esac
+    fi
     count=$((count + 1))
   done
-  if (( JSON_MODE )); then print -rn -- '{"ok":true,"actions":'; print -rn -- "$count"; print -r -- '}'; else print -r -- "batch completed $count actions"; fi
+  if (( JSON_MODE )); then
+    json_actions_output+=']}'; (( batch_failed )) && json_actions_output="${json_actions_output/\"ok\":true/\"ok\":false}"
+    print -r -- "$json_actions_output"
+    (( batch_failed == 0 ))
+  else
+    print -r -- "batch completed $count actions"
+  fi
 }
 
 # Real wheel scrolling for up/down via CoreGraphics. top/bottom remain focus-based
@@ -1291,6 +1333,7 @@ cu — computer-use harness (logical points throughout)
 
 SEE (cheap first, image only if needed)
   cu observe "App" --json      snapshot window + native AX/OCR elements with stable IDs
+                              filter with --role ROLE --name TEXT --max-elements N
   cu [--json] tree "App" [filter] interactive elements + click coords — TEXT, ~0 tokens
                               (activates the app; add --all for every element)
   cu find "App" "Save"        same, filtered

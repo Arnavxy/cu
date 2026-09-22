@@ -173,7 +173,7 @@ default and cannot be reused against a different process or window.
 
 | Command | Purpose |
 | --- | --- |
-| `cu observe "App" --json` | Create a semantic snapshot with stable element handles |
+| `cu observe "App" --json [--role ROLE] [--name TEXT] [--max-elements N]` | Create a bounded semantic snapshot with stable element handles |
 | `cu act e_N --snapshot s_ID --json` | Act on a handle and verify the outcome |
 | `cu tree "App" [filter] [--all]` | Print native accessible controls, names, and logical coordinates |
 | `cu clickel "App" "Name" [--role ROLE] [--index N]` | Perform a named Accessibility action |
@@ -253,7 +253,8 @@ dependency-free adapter separately:
 ./scripts/install-mcp.zsh
 ```
 
-It exposes `observe`, `act`, `wait`, `batch`, and `shot` by invoking the same
+It exposes `observe`, `act`, `wait`, `batch`, `shot`, `click`, `clickel`, and
+`type` by invoking the same
 `cu` binary, so both surfaces share behavior without bundling a model, browser
 engine, or background service.
 
