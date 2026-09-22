@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.4"
+CU_VERSION="0.3.5"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
