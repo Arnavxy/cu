@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.2.9"
+CU_VERSION="0.3.0"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -952,8 +952,72 @@ cmd_key() {
 }
 cmd_pos()    { need_cliclick; "$CLICLICK" p; }
 cmd_color()  { [[ $# -eq 2 ]] && valid_point "$1" && valid_point "$2" || die 'usage: cu color X Y'; need_cliclick; "$CLICLICK" "cp:$1,$2"; }
+wait_result() {
+  local message="$1"
+  if (( JSON_MODE )); then print -rn -- '{"ok":true,"condition":'; json_string "$message"; print -r -- '}'; else print -r -- "$message"; fi
+}
+cmd_wait_semantic() {
+  local mode="$1" app="$2" target="$3" role="" gone=0 timeout_ms="${CU_WAIT_TIMEOUT_MS:-2000}"; shift 3
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --role) [[ $# -ge 2 ]] || die '--role requires a role'; role="$2"; shift 2 ;;
+      --gone) gone=1; shift ;;
+      --timeout) [[ $# -ge 2 ]] || die '--timeout requires milliseconds'; timeout_ms="$2"; shift 2 ;;
+      *) die "unknown wait option '$1'" ;;
+    esac
+  done
+  [[ "$timeout_ms" =~ '^[0-9]+$' ]] || die 'wait timeout must be milliseconds'
+  native_available || die 'native helper is required for semantic waits'
+  zmodload zsh/datetime 2>/dev/null || die 'high-resolution clock is unavailable'
+  local started="$EPOCHREALTIME" now output found current previous=""
+  while true; do
+    case "$mode" in
+      element|value)
+        output=$("$NATIVE" ax-tree "$app" 2>/dev/null) || output=""
+        if [[ "$mode" == element ]]; then
+          found=$(print -r -- "$output" | awk -F '\t' -v wanted="$target" -v wanted_role="$role" '$3 == wanted && (wanted_role == "" || $2 == wanted_role) { print; exit }')
+        else
+          found=$(print -r -- "$output" | awk -F '\t' -v wanted="$target" '$9 == wanted { print; exit }')
+        fi
+        if { (( gone )) && [[ -z "$found" ]]; } || { (( ! gone )) && [[ -n "$found" ]]; }; then
+          if (( gone )); then wait_result "condition gone: $app — $target"; else wait_result "condition ready: $app — $target"; fi
+          return
+        fi
+        ;;
+      stable)
+        current=$(_window_fingerprint "$app" 2>/dev/null) || current=""
+        [[ -n "$current" && "$current" == "$previous" ]] && { wait_result "window stable: $app"; return; }
+        previous="$current"
+        ;;
+      changed)
+        current=$(_window_fingerprint "$app" 2>/dev/null) || current=""
+        [[ -n "$previous" && -n "$current" && "$current" != "$previous" ]] && { wait_result "window changed: $app"; return; }
+        [[ -z "$previous" ]] && previous="$current"
+        ;;
+    esac
+    now="$EPOCHREALTIME"
+    (( (now - started) * 1000 < timeout_ms )) || die "timed out waiting for $mode in '$app'"
+    sleep 0.03
+  done
+}
 cmd_wait() {
   if [[ "${1:-}" != "--window" ]]; then
+    case "${1:-}" in
+      --element|--value)
+        local mode="${1#--}"; shift
+        [[ $# -ge 2 ]] || die "usage: cu wait --$mode APP TARGET [--role ROLE] [--gone] [--timeout MS]"
+        local semantic_app="$1" semantic_target="$2"; shift 2
+        cmd_wait_semantic "$mode" "$semantic_app" "$semantic_target" "$@"
+        return
+        ;;
+      --stable|--changed)
+        local mode="${1#--}"; shift
+        [[ $# -ge 1 ]] || die "usage: cu wait --$mode APP [--timeout MS]"
+        local semantic_app="$1"; shift
+        cmd_wait_semantic "$mode" "$semantic_app" "" "$@"
+        return
+        ;;
+    esac
     [[ $# -eq 1 && "$1" =~ '^[0-9]+$' ]] || die 'usage: cu wait MS | cu wait --window APP TITLE [--gone] [--timeout MS]'
     need_cliclick; "$CLICLICK" "w:$1"; return
   fi
@@ -985,6 +1049,37 @@ cmd_wait() {
     (( (now - started) * 1000 < timeout_ms )) || die "timed out waiting for window '$title' in '$app'"
     sleep 0.03
   done
+}
+
+cmd_batch() {
+  [[ "${1:-}" == --stdin && $# -eq 1 ]] || die 'usage: cu batch --stdin'
+  local line sub count=0
+  local -a parts
+  while IFS= read -r line; do
+    [[ -z "${line//[[:space:]]/}" || "${line#\#}" != "$line" ]] && continue
+    parts=(${(z)line})
+    [[ ${#parts} -gt 0 ]] || continue
+    sub="${parts[1]}"; parts=(${parts[@]:1})
+    case "$sub" in
+      click) cmd_click "${parts[@]}" ;;
+      dclick) cmd_dclick "${parts[@]}" ;;
+      rclick) cmd_rclick "${parts[@]}" ;;
+      move) cmd_move "${parts[@]}" ;;
+      drag) cmd_drag "${parts[@]}" ;;
+      type) cmd_type "${parts[@]}" ;;
+      key) cmd_key "${parts[@]}" ;;
+      combo) cmd_combo "${parts[@]}" ;;
+      scroll) cmd_scroll "${parts[@]}" ;;
+      clickel) cmd_clickel "${parts[@]}" ;;
+      clicktext) cmd_clicktext "${parts[@]}" ;;
+      open) cmd_open "${parts[@]}" ;;
+      wait) cmd_wait "${parts[@]}" ;;
+      act) cmd_act "${parts[@]}" ;;
+      *) die "unsupported batch action '$sub'" ;;
+    esac
+    count=$((count + 1))
+  done
+  if (( JSON_MODE )); then print -rn -- '{"ok":true,"actions":'; print -rn -- "$count"; print -r -- '}'; else print -r -- "batch completed $count actions"; fi
 }
 
 # Real wheel scrolling for up/down via CoreGraphics. top/bottom remain focus-based
@@ -1149,6 +1244,14 @@ ACT
   cu wait MS                  bounded delay
   cu wait --window APP TITLE [--gone] [--timeout MS]
                               wait for a real window state, not a guess
+  cu wait --element APP NAME [--role ROLE] [--gone] [--timeout MS]
+  cu wait --value APP VALUE [--gone] [--timeout MS]
+  cu wait --stable|--changed APP [--timeout MS]
+  cu batch --stdin            run guarded actions from one process
+  cu wait --element APP NAME [--role ROLE] [--gone] [--timeout MS]
+  cu wait --value APP VALUE [--gone] [--timeout MS]
+  cu wait --stable|--changed APP [--timeout MS]
+  cu batch --stdin            run guarded actions from one process
 
 CONTEXT
   cu apps / cu windows ["Safari"] / cu open "Safari" / cu bounds "Safari"
@@ -1189,7 +1292,7 @@ case "$sub" in
   drag) cmd_drag "$@" ;;        type) cmd_type "$@" ;;
   paste) cmd_paste "$@" ;;
   key) cmd_key "$@" ;;          combo) cmd_combo "$@" ;;
-  scroll) cmd_scroll "$@" ;;    pos) cmd_pos ;;
+  scroll) cmd_scroll "$@" ;;    batch) cmd_batch "$@" ;;    pos) cmd_pos ;;
   color) cmd_color "$@" ;;      wait) cmd_wait "$@" ;;
   diff) cmd_diff "$@" ;;        apps) cmd_apps ;;
   open) cmd_open "$@" ;;        bounds) cmd_bounds "$@" ;;

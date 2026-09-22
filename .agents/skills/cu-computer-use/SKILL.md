@@ -27,6 +27,8 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
    - `cu shot -w "App"` or `cu shot NAME`, then `cu click X Y` for visual-only interfaces
 6. For coordinate actions, activate the target app first, use current bounds, and verify with a fresh observation, `cu color X Y`, or `cu diff BEFORE AFTER`.
 
+For multi-step work, use `cu batch --stdin` to keep the sequence in one process. Use `cu wait --element`, `cu wait --value`, `cu wait --stable`, or `cu wait --changed` instead of fixed sleeps when the expected state is expressible locally.
+
 Prefer semantic actions because they are faster, more stable, and cheaper than screenshot reasoning. Use screenshots only when Accessibility and OCR are insufficient. Some applications expose auxiliary windows before their main window; inspect `cu bounds`, `cu windows`, or a full-screen shot when a window capture is unexpectedly small.
 
 ## Input and scrolling

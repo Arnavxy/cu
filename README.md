@@ -182,6 +182,9 @@ default and cannot be reused against a different process or window.
 | `cu click`, `dclick`, `rclick`, `move`, `drag` | Use logical-point pointer input |
 | `cu type`, `paste --stdin`, `key`, `combo` | Send keyboard input or clipboard-safe multiline text |
 | `cu scroll [--app "App"] [--at X Y] up\|down\|top\|bottom [n]` | Target wheel or navigation scrolling at an application and point |
+| `cu wait --element APP NAME` / `--value APP VALUE` | Wait for semantic state |
+| `cu wait --stable APP` / `--changed APP` | Wait for visual state transitions |
+| `cu batch --stdin` | Run guarded actions through one process |
 | `cu color X Y`, `cu diff before after` | Verify visual state without image-model tokens |
 | `cu apps`, `open`, `bounds` | Inspect and activate application context |
 | `cu doctor`, `log`, `clean` | Diagnose, inspect history, and remove screenshots |
@@ -223,6 +226,19 @@ to perform the same direct manipulation a user would.
 Actual latency depends on the target application's accessibility tree and the
 machine. Consumers should measure their own workflows rather than assume fixed
 timings.
+
+### Optional MCP adapter
+
+The core install stays CLI-only. Agents that speak MCP can install the
+dependency-free adapter separately:
+
+```bash
+./scripts/install-mcp.zsh
+```
+
+It exposes `observe`, `act`, `wait`, `batch`, and `shot` by invoking the same
+`cu` binary, so both surfaces share behavior without bundling a model, browser
+engine, or background service.
 
 ## Configuration
 

@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.2.9" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.0" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -38,6 +38,18 @@ window_wait=$( \
 )
 assert_contains "$window_wait" 'window ready: Demo — Demo Window' "condition wait observes native window state"
 pass "condition-based window wait"
+
+semantic_wait=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" "$CU" --json wait --element Demo Save --timeout 50)
+assert_contains "$semantic_wait" '"ok":true' "semantic element wait succeeds"
+value_wait=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" "$CU" --json wait --value Demo 56 --timeout 50)
+assert_contains "$value_wait" 'condition ready' "semantic value wait succeeds"
+pass "semantic waits"
+
+batch_log="$TMP/batch.log"
+batch_result=$(printf '%s\n' 'click 10 20' 'key return' | CU_DIR="$TMP/state" CLICLICK="$ROOT/tests/fixtures/mock-cliclick" CU_MOCK_CLICK_LOG="$batch_log" "$CU" --json batch --stdin)
+assert_contains "$batch_result" '"actions":2' "batch reports action count"
+assert_contains "$(cat "$batch_log")" 'm:10,20 w:35 c:10,20' "batch preserves guarded click"
+pass "single-process action batch"
 
 tree=$(
   CU_DIR="$TMP/state" \
