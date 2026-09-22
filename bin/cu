@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.3"
+CU_VERSION="0.3.4"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -868,6 +868,31 @@ cmd_act() {
   log "act snapshot=$snapshot element=$element_id action=$action_result changed=$changed window=$window_state"
 }
 
+pointer_prepare() {
+  local app="" relative=0 x y b bx by bw bh rest
+  if [[ "${1:-}" == --window || "${1:-}" == --app ]]; then
+    [[ $# -ge 4 ]] || { print -r -- "usage: cu click [--window|--app] APP X Y" >&2; return 1; }
+    [[ "$1" == --window ]] && relative=1
+    app="$2"; x="$3"; y="$4"
+  else
+    [[ $# -eq 2 ]] || { print -r -- 'usage: cu click X Y' >&2; return 1; }
+    x="$1"; y="$2"
+  fi
+  valid_point "$x" && valid_point "$y" || { print -r -- 'coordinates must be numeric logical points' >&2; return 1; }
+  if [[ -n "$app" ]]; then
+    activate_app "$app" || { print -r -- "could not activate '$app'" >&2; return 1; }
+    b=$(win_bounds "$app") || { print -r -- "no visible window matched '$app'" >&2; return 1; }
+    bx=${b%%,*}; rest=${b#*,}; by=${rest%%,*}; rest=${rest#*,}; bw=${rest%%,*}; bh=${rest##*,}
+    if (( relative )); then
+      x=$((bx + x)); y=$((by + y))
+    elif (( x < bx || x > bx + bw || y < by || y > by + bh )); then
+      print -r -- "coordinates $x,$y are outside the current '$app' window ($b); use --window for relative points" >&2
+      return 1
+    fi
+  fi
+  POINTER_X="$x"; POINTER_Y="$y"
+}
+
 _settled_click() {
   local x="${1:-}" y="${2:-}" action="${3:-c}"
   valid_point "$x" && valid_point "$y" || die 'coordinates must be numeric logical points'
@@ -875,9 +900,9 @@ _settled_click() {
   [[ "$CLICK_SETTLE_MS" == <-> ]] || die "CU_CLICK_SETTLE_MS must be a non-negative integer"
   "$CLICLICK" "m:$x,$y" "w:$CLICK_SETTLE_MS" "$action:$x,$y"
 }
-cmd_click()  { [[ $# -eq 2 ]] || die 'usage: cu click X Y'; _settled_click "$1" "$2" c;  log "click $1,$2"; print -r -- "clicked $1,$2"; }
-cmd_dclick() { [[ $# -eq 2 ]] || die 'usage: cu dclick X Y'; _settled_click "$1" "$2" dc; log "dclick $1,$2"; print -r -- "double-clicked $1,$2"; }
-cmd_rclick() { [[ $# -eq 2 ]] || die 'usage: cu rclick X Y'; _settled_click "$1" "$2" rc; log "rclick $1,$2"; print -r -- "right-clicked $1,$2"; }
+cmd_click()  { pointer_prepare "$@" || die 'invalid or unsafe click coordinates'; _settled_click "$POINTER_X" "$POINTER_Y" c;  log "click $POINTER_X,$POINTER_Y"; print -r -- "clicked $POINTER_X,$POINTER_Y"; }
+cmd_dclick() { pointer_prepare "$@" || die 'invalid or unsafe double-click coordinates'; _settled_click "$POINTER_X" "$POINTER_Y" dc; log "dclick $POINTER_X,$POINTER_Y"; print -r -- "double-clicked $POINTER_X,$POINTER_Y"; }
+cmd_rclick() { pointer_prepare "$@" || die 'invalid or unsafe right-click coordinates'; _settled_click "$POINTER_X" "$POINTER_Y" rc; log "rclick $POINTER_X,$POINTER_Y"; print -r -- "right-clicked $POINTER_X,$POINTER_Y"; }
 valid_point() { [[ "$1" =~ '^-?[0-9]+([.][0-9]+)?$' ]]; }
 cmd_move()   { [[ $# -eq 2 ]] && valid_point "$1" && valid_point "$2" || die 'usage: cu move X Y'; need_cliclick; "$CLICLICK" "m:$1,$2";  log "move $1,$2"; print -r -- "moved to $1,$2"; }
 cmd_drag()   { [[ $# -eq 4 ]] && valid_point "$1" && valid_point "$2" && valid_point "$3" && valid_point "$4" || die 'usage: cu drag X1 Y1 X2 Y2'; need_cliclick; "$CLICLICK" "m:$1,$2" "w:$CLICK_SETTLE_MS" "dd:$1,$2" "w:80" "dm:$3,$4" "w:80" "du:$3,$4"; log "drag $1,$2->$3,$4"; print -r -- "dragged $1,$2 -> $3,$4"; }
@@ -1062,7 +1087,11 @@ cmd_wait() {
 batch_validate() {
   local sub="$1"; shift
   case "$sub" in
-    click|dclick|rclick|move)
+    click|dclick|rclick)
+      if [[ $# -eq 2 ]]; then valid_point "$1" && valid_point "$2" || return 1
+      elif [[ $# -eq 4 && ( "$1" == --window || "$1" == --app ) ]]; then valid_point "$3" && valid_point "$4" || return 1
+      else return 1; fi ;;
+    move)
       [[ $# -eq 2 ]] && valid_point "$1" && valid_point "$2" || return 1 ;;
     drag)
       [[ $# -eq 4 ]] && valid_point "$1" && valid_point "$2" && valid_point "$3" && valid_point "$4" || return 1 ;;
@@ -1134,9 +1163,9 @@ cmd_batch() {
   while IFS= read -r line; do
     line_no=$((line_no + 1))
     [[ -z "${line//[[:space:]]/}" || "${line#\#}" != "$line" ]] && continue
-    parts=(${(z)line})
+    parts=(${(@Q)${(z)line}})
     (( ${#parts} > 0 )) || continue
-    sub="${parts[1]}"; parts=(${parts[@]:1})
+    sub="${parts[1]}"; parts=("${parts[@]:1}")
     batch_validate "$sub" "${parts[@]}" || die "batch line $line_no: invalid or unsupported '$sub' action"
     lines+=("$line")
   done
@@ -1144,7 +1173,7 @@ cmd_batch() {
   # entire input has passed validation.
   local batch_failed=0 json_actions_output='{"ok":true,"actions":[' json_first=1 action_output action_rc command_text
   for line in "${lines[@]}"; do
-    parts=(${(z)line}); sub="${parts[1]}"; parts=(${parts[@]:1})
+    parts=(${(@Q)${(z)line}}); sub="${parts[1]}"; parts=("${parts[@]:1}")
     command_text="$line"
     if (( JSON_MODE )); then
       action_output=$(case "$sub" in
@@ -1347,7 +1376,7 @@ ACT
                               act on a snapshot element and verify the result
   cu clickel "App" "Save"     click by name; add --role ROLE --index N for duplicates
   cu clicktext "App" "Save"   OCR fallback: click visible text without AX
-  cu click X Y                also dclick, rclick, move
+  cu click X Y                also dclick, rclick, move; add --app APP to guard or --window APP for relative points
   cu drag X1 Y1 X2 Y2
   cu type "text"              add --paced [--interval MS] for fragile fields
   cu paste --stdin            fast multiline paste; restores the previous clipboard

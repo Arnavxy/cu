@@ -201,6 +201,12 @@ to OCR only when AX exposes no named elements.
 All public coordinates are logical macOS points. Multi-display origins and
 Retina scaling are resolved internally through CoreGraphics.
 
+For coordinate fallback, prefer `cu click --window "App" X Y` when the point
+comes from a window screenshot. cu resolves the current window origin first,
+so moving or resizing the window does not reuse a stale absolute coordinate.
+Use `--app` for an absolute point only when it must be inside the app's current
+window; otherwise the command fails before sending input.
+
 Coordinate clicks deliberately use `move → settle → click` instead of a bare
 click event. This adds 35 ms by default and prevents small controls from missing
 hover, focus, or hit-test updates. Target wheel input explicitly when the app

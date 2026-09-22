@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.3" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.4" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -51,6 +51,10 @@ assert_contains "$batch_result" '"actions":[{' "batch reports structured action 
 assert_contains "$batch_result" '"line":2' "batch includes every action result"
 assert_contains "$(cat "$batch_log")" 'm:10,20 w:35 c:10,20' "batch preserves guarded click"
 pass "single-process action batch"
+
+quoted_batch=$(printf '%s\n' 'open "Calculator"' | CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" "$CU" batch --stdin)
+assert_contains "$quoted_batch" 'activated Calculator' "batch removes shell quotes from arguments"
+pass "quoted batch arguments"
 
 filtered_observe=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" "$CU" --json observe Demo --all --role AXButton --name Save --max-elements 1)
 assert_contains "$filtered_observe" '"id":"e_1"' "observe supports bounded semantic filters"
@@ -166,6 +170,12 @@ CU_DIR="$TMP/state" \
   "$CU" click 10 20 >/dev/null
 assert_contains "$(cat "$pointer_log")" 'm:10,20 w:25 c:10,20' "click moves and settles before pressing"
 pass "settled coordinate click"
+
+relative_log="$TMP/relative.log"
+relative_click=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CLICLICK="$ROOT/tests/fixtures/mock-cliclick" CU_MOCK_CLICK_LOG="$relative_log" "$CU" click --window Demo 10 20)
+assert_contains "$relative_click" 'clicked 110,220' "window-relative click resolves current origin"
+assert_contains "$(cat "$relative_log")" 'm:110,220' "window-relative click sends translated coordinates"
+pass "window-relative coordinate guard"
 
 paste_result=$(
   print -rn -- $'first\nsecond' | \

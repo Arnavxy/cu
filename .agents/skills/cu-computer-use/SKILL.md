@@ -25,7 +25,7 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
    - `cu tree "App" FILTER` or `cu clickel "App" "Name" --role ROLE`
    - `cu clicktext "App" "Visible text"` for local OCR fallback
    - `cu shot -w "App"` or `cu shot NAME`, then `cu click X Y` for visual-only interfaces
-6. For coordinate actions, activate the target app first, use current bounds, and verify with a fresh observation, `cu color X Y`, or `cu diff BEFORE AFTER`.
+6. For coordinate actions, prefer `cu click --window APP X Y` for screenshot/window-relative points or `cu click --app APP X Y` for guarded absolute points. Verify with a fresh observation, `cu color X Y`, or `cu diff BEFORE AFTER`.
 
 For multi-step work, use `cu batch --stdin` to validate the complete script and keep the sequence in one process. Batch also accepts read verbs (`observe`, `find`, and `shot`), so an agent can finish `act → wait → observe` without another CLI startup. Clipboard `paste --stdin` is intentionally not a batch verb because batch owns stdin. Use `cu wait --element`, `cu wait --value`, `cu wait --stable`, or `cu wait --changed` instead of fixed sleeps when the expected state is expressible locally. `cu batch --help` lists the supported verbs.
 
