@@ -4,10 +4,12 @@ mock_window_id="${CU_MOCK_WINDOW_ID:-42}"
 case "${1:-}" in
   context)
     printf 'META\t%s\t4242\t100\t200\t800\t600\tDemo\tDemo Window\tcom.example.Demo\n' "$mock_window_id"
-    print -r -- $'AX\tw0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress\t56'
-    print -r -- $'AX\tw0.1\tAXButton\tSave\t225\t235\t60\t30\tAXPress\t'
-    [[ "${CU_MOCK_DUPLICATE:-0}" == 1 ]] && print -r -- $'AX\tw0.2\tAXButton\tSave\t125\t235\t50\t30\tAXPress\t56'
-    [[ "${CU_MOCK_SCROLLABLE:-0}" == 1 ]] && print -r -- $'AX\tw0.3\tAXScrollArea\tContent\t100\t200\t700\t500\tAXScrollToVisible\t'
+    if [[ "${CU_MOCK_NATIVE_AX_UNAVAILABLE:-0}" != 1 ]]; then
+      print -r -- $'AX\tw0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress\t56'
+      print -r -- $'AX\tw0.1\tAXButton\tSave\t225\t235\t60\t30\tAXPress\t'
+      [[ "${CU_MOCK_DUPLICATE:-0}" == 1 ]] && print -r -- $'AX\tw0.2\tAXButton\tSave\t125\t235\t50\t30\tAXPress\t56'
+      [[ "${CU_MOCK_SCROLLABLE:-0}" == 1 ]] && print -r -- $'AX\tw0.3\tAXScrollArea\tContent\t100\t200\t700\t500\tAXScrollToVisible\t'
+    fi
     :
     :
     ;;
