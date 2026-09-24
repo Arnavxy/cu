@@ -177,7 +177,7 @@ default and cannot be reused against a different process or window.
 
 | Command | Purpose |
 | --- | --- |
-| `cu observe "App" --background --json [--role ROLE] [--name TEXT] [--max-elements N]` | Inspect an app without stealing focus; native AX only |
+| `cu observe "App" --background --json [--role ROLE] [--name TEXT] [--max-elements N]` | Inspect an app without stealing focus; native AX first, isolated window OCR fallback |
 | `cu observe "App" --background --since s_ID --json` | Return only semantic additions, removals, and changes since a snapshot |
 | `cu act e_N --snapshot s_ID --json` | Act on a handle, focus the target, and verify the outcome |
 | `cu act e_N --snapshot s_ID --background --json` | Run a native AX action without focus, screenshots, or mouse fallback |
@@ -257,7 +257,7 @@ execution, so semantic waits and snapshot guards still apply.
 ## Performance model
 
 - Interactive-only native traversal is the default to minimize latency and JSON size.
-- `observe --background` obtains a background window's identity and Accessibility tree in one native call without changing focus. It intentionally fails rather than taking an unreliable OCR capture through an occluding foreground window.
+- `observe --background` obtains a background window's identity and Accessibility tree in one native call without changing focus. If AX exposes no elements, it captures that CoreGraphics window by ID for local OCR, never the occluding foreground app.
 - `observe --since s_ID` stores the fresh snapshot but returns only changed semantic elements and compact removal metadata, keeping polling affordable for text-only models.
 - Foreground `observe` keeps the existing OCR fallback for visual-only applications.
 - OCR runs locally and only as a fallback.

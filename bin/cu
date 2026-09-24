@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.4.0"
+CU_VERSION="0.4.1"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -306,6 +306,27 @@ _ocr_window_tsv() {
   nonce="$$.$RANDOM"
   raw="$SHOTS/observe.$nonce.raw.png"; image="$SHOTS/observe.$nonce.png"
   "$SCREENCAPTURE" -x -o -R"${x},${y},${w},${h}" "$raw" >/dev/null 2>&1
+  [[ -s "$raw" ]] || return 1
+  "$SIPS" --resampleWidth "$w" "$raw" --out "$image" >/dev/null 2>&1 || cp "$raw" "$image"
+  rm -f "$raw"
+  output=$("$NATIVE" ocr "$image" "$x" "$y" 2>&1); rc=$?
+  rm -f "$image"
+  (( rc == 0 )) || return "$rc"
+  print -r -- "$output"
+}
+
+# Capture a single CoreGraphics window without activating it. This is the
+# background OCR escape hatch for custom surfaces (for example Device Hub)
+# that expose no native Accessibility elements. Window-server capture avoids
+# reading an unrelated foreground app when the target is occluded.
+_ocr_window_background_tsv() {
+  local app="$1" row id pid x y w h owner title nonce raw image output rc
+  native_available || return 1
+  row=$(native_window "$app") || return 1
+  IFS=$'\t' read -r id pid x y w h owner title <<< "$row"
+  nonce="$$.$RANDOM"
+  raw="$SHOTS/observe-background.$nonce.raw.png"; image="$SHOTS/observe-background.$nonce.png"
+  "$SCREENCAPTURE" -x -o -l"$id" "$raw" >/dev/null 2>&1
   [[ -s "$raw" ]] || return 1
   "$SIPS" --resampleWidth "$w" "$raw" --out "$image" >/dev/null 2>&1 || cp "$raw" "$image"
   rm -f "$raw"
@@ -725,12 +746,12 @@ cmd_observe() {
     done <<< "$ax_output"
   else
     if (( background )); then
-      rm -f "$tmp"
-      runtime_fail background_ax_unavailable "background observe requires native Accessibility elements; run foreground observe to allow OCR fallback"
-      return 1
+      source="vision_ocr"
+      ocr_output=$(_ocr_window_background_tsv "$app") || { rm -f "$tmp"; runtime_fail background_ocr_unavailable "background observation found no native AX elements and window OCR capture failed"; return 1; }
+    else
+      source="vision_ocr"
+      ocr_output=$(_ocr_window_tsv "$app") || { rm -f "$tmp"; die "native AX exposed no elements and OCR capture failed"; }
     fi
-    source="vision_ocr"
-    ocr_output=$(_ocr_window_tsv "$app") || { rm -f "$tmp"; die "native AX exposed no elements and OCR capture failed"; }
     local cx cy
     while IFS=$'\t' read -r name cx cy ew eh confidence; do
       [[ -n "$name" && -n "$cx" && -n "$cy" ]] || continue

@@ -14,7 +14,7 @@ CU = os.environ.get("CU_BIN") or shutil.which("cu") or str(ROOT / "bin" / "cu")
 
 
 TOOLS = [
-    {"name": "cu_observe", "description": "Observe a macOS app as bounded JSON. Set background to avoid stealing focus (native AX only); use since to return only semantic changes from a prior snapshot.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "background": {"type": "boolean"}, "since": {"type": "string"}, "all": {"type": "boolean"}, "role": {"type": "string"}, "name": {"type": "string"}, "max_elements": {"type": "integer", "minimum": 1}}, "required": ["app"]}},
+    {"name": "cu_observe", "description": "Observe a macOS app as bounded JSON. Set background to avoid stealing focus; it uses native AX then isolated window OCR if needed. Use since to return only semantic changes from a prior snapshot.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "background": {"type": "boolean"}, "since": {"type": "string"}, "all": {"type": "boolean"}, "role": {"type": "string"}, "name": {"type": "string"}, "max_elements": {"type": "integer", "minimum": 1}}, "required": ["app"]}},
     {"name": "cu_act", "description": "Act on a snapshot-scoped cu element. Set background for AX-only execution with no focus, screenshots, or pointer fallback.", "inputSchema": {"type": "object", "properties": {"element": {"type": "string"}, "snapshot": {"type": "string"}, "background": {"type": "boolean"}, "verify": {"type": "boolean", "default": True}}, "required": ["element", "snapshot"]}},
     {"name": "cu_audit", "description": "Audit a native Accessibility tree without screenshots: unnamed interactive controls, duplicate accessible names, and generic-element counts.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "max_issues": {"type": "integer", "minimum": 1}}, "required": ["app"]}},
     {"name": "cu_wait", "description": "Wait for a window, semantic element/value, stability, or visual change.", "inputSchema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["window", "element", "value", "stable", "changed"]}, "app": {"type": "string"}, "target": {"type": "string"}, "role": {"type": "string"}, "gone": {"type": "boolean"}, "timeout_ms": {"type": "integer"}}, "required": ["mode", "app"]}},
@@ -136,7 +136,7 @@ def main():
         if request_id is None:
             continue
         if method == "initialize":
-            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.4.0"}})
+            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.4.1"}})
         elif method == "tools/list":
             reply(request_id, {"tools": TOOLS})
         elif method == "tools/call":

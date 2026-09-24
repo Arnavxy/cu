@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.4.0" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.4.1" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -299,6 +299,20 @@ assert_contains "$background_observation" '"background":true' "background observ
 assert_contains "$(cat "$background_log")" 'context Demo --interactive' "background observe reads native AX"
 if grep -q '^activate Demo$' "$background_log"; then fail "background observe must not activate the app"; fi
 pass "background observation avoids focus"
+
+background_ocr_log="$TMP/observe-background-ocr.log"
+background_ocr=$( \
+  CU_DIR="$TMP/background-ocr-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_MOCK_NATIVE_AX_UNAVAILABLE=1 \
+  CU_MOCK_NATIVE_LOG="$background_ocr_log" \
+  CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" \
+  CU_SIPS="$ROOT/tests/fixtures/mock-sips" \
+  "$CU" observe Demo --background --json
+)
+assert_contains "$background_ocr" '"source":"vision_ocr"' "background observe falls back to window OCR"
+if grep -q '^activate Demo$' "$background_ocr_log"; then fail "background OCR must not activate the app"; fi
+pass "background OCR avoids focus"
 
 delta_observation=$( \
   CU_DIR="$TMP/background-state" \
