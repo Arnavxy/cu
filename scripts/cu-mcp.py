@@ -14,8 +14,9 @@ CU = os.environ.get("CU_BIN") or shutil.which("cu") or str(ROOT / "bin" / "cu")
 
 
 TOOLS = [
-    {"name": "cu_observe", "description": "Observe a macOS app with bounded native AX/OCR JSON. Prefer max_elements and role/name filters on dense screens; use all for overlay/custom controls.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "all": {"type": "boolean"}, "role": {"type": "string"}, "name": {"type": "string"}, "max_elements": {"type": "integer", "minimum": 1}}, "required": ["app"]}},
-    {"name": "cu_act", "description": "Act on a snapshot-scoped cu element and verify it.", "inputSchema": {"type": "object", "properties": {"element": {"type": "string"}, "snapshot": {"type": "string"}, "verify": {"type": "boolean", "default": True}}, "required": ["element", "snapshot"]}},
+    {"name": "cu_observe", "description": "Observe a macOS app as bounded JSON. Set background to avoid stealing focus (native AX only); use since to return only semantic changes from a prior snapshot.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "background": {"type": "boolean"}, "since": {"type": "string"}, "all": {"type": "boolean"}, "role": {"type": "string"}, "name": {"type": "string"}, "max_elements": {"type": "integer", "minimum": 1}}, "required": ["app"]}},
+    {"name": "cu_act", "description": "Act on a snapshot-scoped cu element. Set background for AX-only execution with no focus, screenshots, or pointer fallback.", "inputSchema": {"type": "object", "properties": {"element": {"type": "string"}, "snapshot": {"type": "string"}, "background": {"type": "boolean"}, "verify": {"type": "boolean", "default": True}}, "required": ["element", "snapshot"]}},
+    {"name": "cu_audit", "description": "Audit a native Accessibility tree without screenshots: unnamed interactive controls, duplicate accessible names, and generic-element counts.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "max_issues": {"type": "integer", "minimum": 1}}, "required": ["app"]}},
     {"name": "cu_wait", "description": "Wait for a window, semantic element/value, stability, or visual change.", "inputSchema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["window", "element", "value", "stable", "changed"]}, "app": {"type": "string"}, "target": {"type": "string"}, "role": {"type": "string"}, "gone": {"type": "boolean"}, "timeout_ms": {"type": "integer"}}, "required": ["mode", "app"]}},
     {"name": "cu_batch", "description": "Run a guarded line-oriented cu action batch in one process.", "inputSchema": {"type": "object", "properties": {"script": {"type": "string"}}, "required": ["script"]}},
     {"name": "cu_shot", "description": "Capture a full screen or named app window to a local PNG.", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "name": {"type": "string"}}}},
@@ -35,6 +36,10 @@ def call_tool(name, arguments):
     arguments = arguments or {}
     if name == "cu_observe":
         args = ["--json", "observe", arguments["app"]]
+        if arguments.get("background"):
+            args.append("--background")
+        if arguments.get("since"):
+            args += ["--since", arguments["since"]]
         if arguments.get("all"):
             args.append("--all")
         if arguments.get("role"):
@@ -46,8 +51,15 @@ def call_tool(name, arguments):
         return invoke(args)
     if name == "cu_act":
         args = ["--json", "act", arguments["element"], "--snapshot", arguments["snapshot"]]
+        if arguments.get("background"):
+            args.append("--background")
         if arguments.get("verify", True) is False:
             args.append("--no-verify")
+        return invoke(args)
+    if name == "cu_audit":
+        args = ["--json", "audit", arguments["app"]]
+        if arguments.get("max_issues") is not None:
+            args += ["--max-issues", str(arguments["max_issues"])]
         return invoke(args)
     if name == "cu_wait":
         mode = arguments.get("mode", "window")
@@ -124,7 +136,7 @@ def main():
         if request_id is None:
             continue
         if method == "initialize":
-            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.3.9"}})
+            reply(request_id, {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "cu", "version": "0.4.0"}})
         elif method == "tools/list":
             reply(request_id, {"tools": TOOLS})
         elif method == "tools/call":

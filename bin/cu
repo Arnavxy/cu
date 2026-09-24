@@ -2,7 +2,7 @@
 # cu — computer-use harness for macOS (v2)
 # Coordinates are LOGICAL POINTS: what `cu shot` shows == what `cu click` hits.
 set -u
-CU_VERSION="0.3.10"
+CU_VERSION="0.4.0"
 CUDIR="${CU_DIR:-$HOME/.cu}"; SHOTS="$CUDIR/shots"; SNAPSHOTS="$CUDIR/snapshots"; LOG="$CUDIR/log"
 mkdir -p "$SHOTS" "$SNAPSHOTS"
 chmod 700 "$CUDIR" "$SHOTS" "$SNAPSHOTS" 2>/dev/null || true
@@ -645,12 +645,13 @@ runtime_fail() {
 }
 
 cmd_observe() {
-  [[ $# -ge 1 ]] || die 'usage: cu observe "App" [--background] [--all] [--role ROLE] [--name TEXT] [--max-elements N] [--json]'
+  [[ $# -ge 1 ]] || die 'usage: cu observe "App" [--background] [--since SNAPSHOT] [--all] [--role ROLE] [--name TEXT] [--max-elements N] [--json]'
   local app="$1"; shift
-  local all=0 background=0 role_filter="" name_filter="" max_elements=0
+  local all=0 background=0 since="" role_filter="" name_filter="" max_elements=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --background) background=1; shift ;;
+      --since) [[ $# -ge 2 ]] || die '--since requires a snapshot ID'; since="$2"; shift 2 ;;
       --all) all=1; shift ;;
       --role) [[ $# -ge 2 ]] || die '--role requires a role'; role_filter="$2"; shift 2 ;;
       --name|--filter) [[ $# -ge 2 ]] || die '--name requires text'; name_filter="$2"; shift 2 ;;
@@ -660,6 +661,10 @@ cmd_observe() {
     esac
   done
   native_available || die "native helper is required (run scripts/build-native.zsh)"
+  if [[ -n "$since" ]]; then
+    [[ "$since" =~ '^s_[0-9]+_[0-9]+$' ]] || die '--since requires a valid snapshot ID'
+    [[ -f "$SNAPSHOTS/$since.tsv" ]] || die "snapshot '$since' does not exist or expired"
+  fi
   # CoreGraphics and AX can inspect a background app directly. Keep focus with
   # the user when requested; OCR is deliberately unavailable in that mode
   # because a screen capture can include an occluding foreground window.
@@ -745,6 +750,50 @@ cmd_observe() {
   mv "$tmp" "$file"
   find "$SNAPSHOTS" -type f -name 's_*.tsv' -mtime +1 -delete 2>/dev/null || true
 
+  # Delta mode suppresses unchanged elements so an agent pays only for state
+  # transitions. AX paths are stable identities; OCR falls back to its visible
+  # role/name/bounds tuple because it has no durable path.
+  local delta_added=0 delta_changed=0 delta_removed=0 delta_unchanged=0 removed_json=""
+  typeset -A prior_signature prior_label current_identity delta_kind
+  if [[ -n "$since" ]]; then
+    local prior_file="$SNAPSHOTS/$since.tsv" prior_meta prior_app prior_pid identity sig
+    prior_meta=$(sed -n '1p' "$prior_file")
+    IFS=$'\t' read -r _ _ _ prior_app prior_pid _ _ _ _ _ _ _ <<< "$prior_meta"
+    [[ "$prior_app" == "$app_name" && "$prior_pid" == "$pid" ]] || die "snapshot '$since' belongs to a different application instance"
+    while IFS=$'\t' read -r kind id source element_path role name ex ey ew eh confidence actions value; do
+      [[ "$kind" == EL ]] || continue
+      identity="$source:$element_path"
+      [[ "$element_path" != "-" ]] || identity="$source:$role:$name:$ex:$ey:$ew:$eh"
+      prior_signature[$identity]="$role|$name|$ex|$ey|$ew|$eh|$actions|$value"
+      prior_label[$identity]="$role|$name|$ex|$ey|$ew|$eh"
+    done < "$prior_file"
+    while IFS=$'\t' read -r kind id source element_path role name ex ey ew eh confidence actions value; do
+      [[ "$kind" == EL ]] || continue
+      identity="$source:$element_path"
+      [[ "$element_path" != "-" ]] || identity="$source:$role:$name:$ex:$ey:$ew:$eh"
+      current_identity[$identity]=1
+      sig="$role|$name|$ex|$ey|$ew|$eh|$actions|$value"
+      if [[ -z "${prior_signature[$identity]:-}" ]]; then
+        delta_kind[$id]=added; delta_added=$((delta_added + 1))
+      elif [[ "${prior_signature[$identity]}" == "$sig" ]]; then
+        delta_kind[$id]=unchanged; delta_unchanged=$((delta_unchanged + 1))
+      else
+        delta_kind[$id]=changed; delta_changed=$((delta_changed + 1))
+      fi
+    done < "$file"
+    local first_removed=1 label old_role old_name old_x old_y old_w old_h
+    for identity in ${(k)prior_signature}; do
+      [[ -n "${current_identity[$identity]:-}" ]] && continue
+      delta_removed=$((delta_removed + 1))
+      label="${prior_label[$identity]}"
+      IFS='|' read -r old_role old_name old_x old_y old_w old_h <<< "$label"
+      (( first_removed )) || removed_json+=","; first_removed=0
+      removed_json+="{\"role\":"; removed_json+="$(json_string "$old_role")"
+      removed_json+=",\"name\":"; removed_json+="$(json_string "$old_name")"
+      removed_json+=",\"bounds\":[$old_x,$old_y,$old_w,$old_h]}"
+    done
+  fi
+
   print -rn -- '{"ok":true,"snapshot":'; json_string "$snapshot"
   print -rn -- ',"created_at":'; print -rn -- "$created"
   print -rn -- ',"source":'; json_string "$source"
@@ -758,18 +807,78 @@ cmd_observe() {
   print -rn -- ',"bundle_id":'; json_string "$bundle"; print -rn -- '}'
   print -rn -- ',"window":{"id":'; print -rn -- "$window_id"; print -rn -- ',"title":'; json_string "$title"
   print -rn -- ',"bounds":['; print -rn -- "$wx,$wy,$ww,$wh"; print -rn -- ']}'
+  if [[ -n "$since" ]]; then
+    print -rn -- ',"delta":{"from":'; json_string "$since"; print -rn -- ',"added":'; print -rn -- "$delta_added"
+    print -rn -- ',"changed":'; print -rn -- "$delta_changed"; print -rn -- ',"removed":'; print -rn -- "$delta_removed"
+    print -rn -- ',"unchanged":'; print -rn -- "$delta_unchanged"; print -rn -- '}'
+  fi
   print -rn -- ',"elements":['
   local kind first=1
   while IFS=$'\t' read -r kind id source element_path role name ex ey ew eh confidence actions value; do
     [[ "$kind" == EL ]] || continue
+    [[ -z "$since" || "${delta_kind[$id]:-unchanged}" != unchanged ]] || continue
     (( first )) || print -rn -- ','; first=0
     print -rn -- '{"id":'; json_string "$id"; print -rn -- ',"source":'; json_string "$source"
     print -rn -- ',"role":'; json_string "$role"; print -rn -- ',"name":'; json_string "$name"; print -rn -- ',"value":'; json_string "$value"
     print -rn -- ',"bounds":['; print -rn -- "$ex,$ey,$ew,$eh"; print -rn -- '],"confidence":'; print -rn -- "$confidence"
-    print -rn -- ',"actions":'; json_actions "$actions"; print -rn -- '}'
+    print -rn -- ',"actions":'; json_actions "$actions"
+    [[ -z "$since" ]] || { print -rn -- ',"change":'; json_string "${delta_kind[$id]}"; }
+    print -rn -- '}'
   done < "$file"
-  print -r -- ']}'
+  print -rn -- ']'
+  [[ -z "$since" ]] || print -rn -- ',"removed":['"$removed_json"']'
+  print -r -- '}'
   log "observe $app snapshot=$snapshot source=$source elements=$count"
+}
+
+cmd_audit() {
+  [[ $# -ge 1 ]] || die 'usage: cu audit "App" [--max-issues N] [--json]'
+  local app="$1" max_issues=50; shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --max-issues) [[ $# -ge 2 && "$2" == <-> && "$2" -gt 0 ]] || die '--max-issues must be a positive integer'; max_issues="$2"; shift 2 ;;
+      --json) JSON_MODE=1; shift ;;
+      *) die "unknown audit option '$1'" ;;
+    esac
+  done
+  native_available || die 'native helper is required for audit'
+  local output row ax_path role name x y w h actions value elements=0 interactive=0 generic=0 unnamed=0 issue_count=0 issues="" label_key="" occurrences=0
+  typeset -A duplicate_counts duplicate_bounds
+  output=$("$NATIVE" ax-tree "$app" --all 2>/dev/null) || { runtime_fail audit_failed "could not read Accessibility tree for '$app'"; return 1; }
+  while IFS=$'\t' read -r ax_path role name x y w h actions value; do
+    [[ -n "$ax_path" && -n "$role" ]] || continue
+    elements=$((elements + 1))
+    [[ "$role" == AXGenericElement ]] && generic=$((generic + 1))
+    if [[ -n "$actions" ]]; then
+      interactive=$((interactive + 1))
+      if [[ -z "$name" ]]; then
+        unnamed=$((unnamed + 1))
+        if (( issue_count < max_issues )); then
+          (( issue_count )) && issues+=","; issue_count=$((issue_count + 1))
+          issues+="{\"kind\":\"unnamed_interactive\",\"role\":"; issues+="$(json_string "$role")"
+          issues+=",\"bounds\":[$x,$y,$w,$h]}"
+        fi
+      else
+        label_key="$role|$name"
+        duplicate_counts[$label_key]=$(( ${duplicate_counts[$label_key]:-0} + 1 ))
+        duplicate_bounds[$label_key]="${duplicate_bounds[$label_key]:-}$x,$y,$w,$h;"
+      fi
+    fi
+  done <<< "$output"
+  for label_key in ${(k)duplicate_counts}; do
+    occurrences=${duplicate_counts[$label_key]}
+    (( occurrences > 1 && issue_count < max_issues )) || continue
+    role=${label_key%%|*}; name=${label_key#*|}
+    (( issue_count )) && issues+=","; issue_count=$((issue_count + 1))
+    issues+="{\"kind\":\"duplicate_accessible_name\",\"role\":"; issues+="$(json_string "$role")"
+    issues+=",\"name\":"; issues+="$(json_string "$name")"
+    issues+=",\"count\":$occurrences}"
+  done
+  print -rn -- '{"ok":true,"app":'; json_string "$app"
+  print -rn -- ',"summary":{"elements":'; print -rn -- "$elements"; print -rn -- ',"interactive":'; print -rn -- "$interactive"
+  print -rn -- ',"generic_elements":'; print -rn -- "$generic"; print -rn -- ',"unnamed_interactive":'; print -rn -- "$unnamed"
+  print -rn -- '},"issues":['"$issues"']}'
+  log "audit $app elements=$elements interactive=$interactive unnamed=$unnamed generic=$generic"
 }
 
 cmd_act() {
@@ -1423,6 +1532,7 @@ SEE (cheap first, image only if needed)
   cu observe "App" --json      snapshot window + native AX/OCR elements with stable IDs
                               filter with --role ROLE --name TEXT --max-elements N
                               add --background to inspect without stealing focus (AX only)
+  cu audit "App" --json        inspect Accessibility quality without screenshots
   cu [--json] tree "App" [filter] interactive elements + click coords — TEXT, ~0 tokens
                               (activates the app; add --all for every element)
   cu find "App" "Save"        same, filtered
@@ -1483,6 +1593,7 @@ if [[ $# -gt 0 && "$1" == "--json" ]]; then JSON_MODE=1; shift; fi
 sub="$1"; shift
 case "$sub" in
   observe) cmd_observe "$@" ;;    act) cmd_act "$@" ;;
+  audit) cmd_audit "$@" ;;
   shot) cmd_shot "$@" ;;          tree) cmd_tree "$@" ;;
   find) cmd_find "$@" ;;          clickel) cmd_clickel "$@" ;;
   clicktext) cmd_clicktext "$@" ;;

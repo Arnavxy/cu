@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.10" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.4.0" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -299,6 +299,21 @@ assert_contains "$background_observation" '"background":true' "background observ
 assert_contains "$(cat "$background_log")" 'context Demo --interactive' "background observe reads native AX"
 if grep -q '^activate Demo$' "$background_log"; then fail "background observe must not activate the app"; fi
 pass "background observation avoids focus"
+
+delta_observation=$( \
+  CU_DIR="$TMP/background-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  "$CU" observe Demo --background --since "$(print -r -- "$background_observation" | sed -n 's/.*"snapshot":"\([^"]*\)".*/\1/p')" --json
+)
+assert_contains "$delta_observation" '"delta":{"from":' "delta observation identifies its baseline"
+assert_contains "$delta_observation" '"unchanged":2' "delta observation suppresses unchanged elements"
+assert_contains "$delta_observation" '"elements":[]' "delta observation returns no unchanged elements"
+pass "delta observation is token-bounded"
+
+audit_output=$(CU_DIR="$TMP/audit-state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" "$CU" audit Demo --json)
+assert_contains "$audit_output" '"interactive":2' "audit counts interactive elements"
+assert_contains "$audit_output" '"duplicate_accessible_name"' "audit reports duplicate accessible names"
+pass "accessibility audit"
 
 runtime_action=$(
   CU_DIR="$TMP/runtime-state" \

@@ -11,6 +11,10 @@ JSON, acts on snapshot-scoped handles, and verifies the result. It gives an
 agent reliable “eyes and hands” without requiring a full screenshot for every
 step.
 
+For agents without vision, `cu` is a semantic desktop interface: native
+Accessibility observations, value/state reads, delta snapshots, semantic waits,
+and accessibility audits are structured JSON and do not require screenshots.
+
 ## Install with Homebrew
 
 ```bash
@@ -174,8 +178,10 @@ default and cannot be reused against a different process or window.
 | Command | Purpose |
 | --- | --- |
 | `cu observe "App" --background --json [--role ROLE] [--name TEXT] [--max-elements N]` | Inspect an app without stealing focus; native AX only |
+| `cu observe "App" --background --since s_ID --json` | Return only semantic additions, removals, and changes since a snapshot |
 | `cu act e_N --snapshot s_ID --json` | Act on a handle, focus the target, and verify the outcome |
 | `cu act e_N --snapshot s_ID --background --json` | Run a native AX action without focus, screenshots, or mouse fallback |
+| `cu audit "App" --json` | Audit native Accessibility labels, duplicate names, and generic elements without a screenshot |
 | `cu tree "App" [filter] [--all]` | Print native accessible controls, names, and logical coordinates |
 | `cu clickel "App" "Name" [--role ROLE] [--index N]` | Perform a named Accessibility action |
 | `cu clicktext "App" "Text" [--index N]` | Click visible text through local OCR |
@@ -252,6 +258,7 @@ execution, so semantic waits and snapshot guards still apply.
 
 - Interactive-only native traversal is the default to minimize latency and JSON size.
 - `observe --background` obtains a background window's identity and Accessibility tree in one native call without changing focus. It intentionally fails rather than taking an unreliable OCR capture through an occluding foreground window.
+- `observe --since s_ID` stores the fresh snapshot but returns only changed semantic elements and compact removal metadata, keeping polling affordable for text-only models.
 - Foreground `observe` keeps the existing OCR fallback for visual-only applications.
 - OCR runs locally and only as a fallback.
 - Captures are scoped to the target window when possible.

@@ -16,7 +16,7 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
 
 ## Efficient interaction loop
 
-1. Work in the background by default: start with `cu observe "App" --background --json --max-elements N`, adding `--name TEXT` or `--role ROLE` when known. Native AX can inspect a background app without stealing the user's focus. Filter the JSON locally to relevant names, roles, and safe read-only values instead of returning a large accessibility tree to the model. Values from editable or password-like controls are intentionally omitted.
+1. Work in the background by default: start with `cu observe "App" --background --json --max-elements N`, adding `--name TEXT` or `--role ROLE` when known. Native AX can inspect a background app without stealing the user's focus. For polling, use `cu observe "App" --background --since s_ID --json` and reason only over additions, removals, and changed elements. Filter the JSON locally to relevant names, roles, and safe read-only values instead of returning a large accessibility tree to the model. Values from editable or password-like controls are intentionally omitted.
 2. Use `cu open "App"` only when foreground input or an OCR/screenshot fallback is actually necessary. Background observation deliberately fails when native AX is absent, because an OCR capture of an occluded window is unsafe.
    `visibility.may_contain_scrolled_out` is conservatively true because AX does not prove offscreen completeness; absence means “not in the current viewport,” not “does not exist.” Scroll and observe again before reporting a missing control.
 3. Prefer a unique semantic element. If the task is authorized to mutate an app without interrupting the user, call `cu act e_N --snapshot s_ID --background --json`; it is AX-only and never focuses the target, captures pixels, or moves the pointer. Use ordinary `cu act` only when foreground verification and coordinate fallback are worth the interruption. Treat handles as snapshot-scoped; re-observe after meaningful UI changes.
@@ -31,6 +31,8 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
 For multi-step work, use `cu batch --stdin` to validate the complete script and keep the sequence in one process. Batch also accepts read verbs (`observe`, `find`, and `shot`), so an agent can finish `act → wait → observe` without another CLI startup. Clipboard `paste --stdin` is intentionally not a batch verb because batch owns stdin. Use `cu wait --element`, `cu wait --value`, `cu wait --stable`, or `cu wait --changed` instead of fixed sleeps when the expected state is expressible locally. `cu batch --help` lists the supported verbs.
 
 Prefer semantic actions because they are faster, more stable, and cheaper than screenshot reasoning. Use screenshots only when Accessibility and OCR are insufficient. Some applications expose auxiliary windows before their main window; inspect `cu bounds`, `cu windows`, or a full-screen shot when a window capture is unexpectedly small.
+
+For accessibility findings that do not require a visual review, run `cu audit "App" --json`. It reads native AX only and reports unnamed interactive controls, duplicate accessible labels, and generic-element counts; do not infer missing roles solely from pixels.
 
 ## Input and scrolling
 
