@@ -24,7 +24,7 @@ agent running `cu`; screenshot and OCR commands also require Screen Recording.
 ## Quick start
 
 ```bash
-observation="$(cu observe "Xcode" --json)"
+observation="$(cu observe "Xcode" --background --json)"
 snapshot="$(jq -r '.snapshot' <<< "$observation")"
 target="$(jq -r '.elements[] | select(.name == "Clone…") | .id' <<< "$observation")"
 
@@ -173,8 +173,9 @@ default and cannot be reused against a different process or window.
 
 | Command | Purpose |
 | --- | --- |
-| `cu observe "App" --json [--role ROLE] [--name TEXT] [--max-elements N]` | Create a bounded semantic snapshot with stable element handles |
-| `cu act e_N --snapshot s_ID --json` | Act on a handle and verify the outcome |
+| `cu observe "App" --background --json [--role ROLE] [--name TEXT] [--max-elements N]` | Inspect an app without stealing focus; native AX only |
+| `cu act e_N --snapshot s_ID --json` | Act on a handle, focus the target, and verify the outcome |
+| `cu act e_N --snapshot s_ID --background --json` | Run a native AX action without focus, screenshots, or mouse fallback |
 | `cu tree "App" [filter] [--all]` | Print native accessible controls, names, and logical coordinates |
 | `cu clickel "App" "Name" [--role ROLE] [--index N]` | Perform a named Accessibility action |
 | `cu clicktext "App" "Text" [--index N]` | Click visible text through local OCR |
@@ -250,7 +251,8 @@ execution, so semantic waits and snapshot guards still apply.
 ## Performance model
 
 - Interactive-only native traversal is the default to minimize latency and JSON size.
-- `observe` obtains the focused window, identity, and Accessibility tree in one native call; it waits only when a newly activated app has not published a window yet.
+- `observe --background` obtains a background window's identity and Accessibility tree in one native call without changing focus. It intentionally fails rather than taking an unreliable OCR capture through an occluding foreground window.
+- Foreground `observe` keeps the existing OCR fallback for visual-only applications.
 - OCR runs locally and only as a fallback.
 - Captures are scoped to the target window when possible.
 - Verification uses a downsampled pixel fingerprint rather than returning another image.

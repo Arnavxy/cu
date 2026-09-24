@@ -16,10 +16,10 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
 
 ## Efficient interaction loop
 
-1. Activate an existing app with `cu open "App"` when needed.
-2. Start with `cu observe "App" --json --max-elements N`, adding `--name TEXT` or `--role ROLE` when known. Filter the JSON locally to relevant names, roles, and safe read-only values instead of returning a large accessibility tree to the model. Values from editable or password-like controls are intentionally omitted.
+1. Work in the background by default: start with `cu observe "App" --background --json --max-elements N`, adding `--name TEXT` or `--role ROLE` when known. Native AX can inspect a background app without stealing the user's focus. Filter the JSON locally to relevant names, roles, and safe read-only values instead of returning a large accessibility tree to the model. Values from editable or password-like controls are intentionally omitted.
+2. Use `cu open "App"` only when foreground input or an OCR/screenshot fallback is actually necessary. Background observation deliberately fails when native AX is absent, because an OCR capture of an occluded window is unsafe.
    `visibility.may_contain_scrolled_out` is conservatively true because AX does not prove offscreen completeness; absence means “not in the current viewport,” not “does not exist.” Scroll and observe again before reporting a missing control.
-3. Prefer a unique semantic element and immediately call `cu act e_N --snapshot s_ID --json`. Treat handles as snapshot-scoped; re-observe after meaningful UI changes.
+3. Prefer a unique semantic element. If the task is authorized to mutate an app without interrupting the user, call `cu act e_N --snapshot s_ID --background --json`; it is AX-only and never focuses the target, captures pixels, or moves the pointer. Use ordinary `cu act` only when foreground verification and coordinate fallback are worth the interruption. Treat handles as snapshot-scoped; re-observe after meaningful UI changes.
 4. Check the returned verification object, then observe the expected state or target text. Do not assume a reported click means the intended outcome occurred. For a known dialog/window transition, prefer `cu wait --window APP TITLE [--gone] [--timeout MS]` over a guessed sleep.
    `AXPress` means the Accessibility request was accepted, not necessarily that an app handler ran. `cu act` checks the target semantically before falling back to its fresh center, including when the surrounding window is animated. Treat `visual_activity: animated` with `changed: null` as indeterminate and re-observe the expected state.
 5. Escalate only as needed:

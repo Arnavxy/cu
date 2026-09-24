@@ -16,7 +16,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 zsh -n "$CU" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.9" "version is reported"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.3.10" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -287,6 +287,19 @@ assert_contains "$observation" '"id":"e_1"' "observe returns stable element hand
 assert_contains "$observation" '"value":"56"' "observe returns safe AX values"
 assert_contains "$(cat "$observe_log")" 'context Demo --interactive' "observe fetches window and AX data in one native call"
 snapshot=$(print -r -- "$observation" | sed -n 's/.*"snapshot":"\([^"]*\)".*/\1/p')
+
+background_log="$TMP/observe-background.log"
+background_observation=$( \
+  CU_DIR="$TMP/background-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  CU_MOCK_NATIVE_LOG="$background_log" \
+  "$CU" observe Demo --background --json
+)
+assert_contains "$background_observation" '"background":true' "background observe reports its no-focus mode"
+assert_contains "$(cat "$background_log")" 'context Demo --interactive' "background observe reads native AX"
+if grep -q '^activate Demo$' "$background_log"; then fail "background observe must not activate the app"; fi
+pass "background observation avoids focus"
+
 runtime_action=$(
   CU_DIR="$TMP/runtime-state" \
   CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
@@ -323,6 +336,15 @@ no_verify_action=$( \
 )
 assert_contains "$no_verify_action" '"verification":{"available":false,"changed":null' "no-verify skips verification work"
 pass "no-verify action path"
+
+background_action=$( \
+  CU_DIR="$TMP/runtime-state" \
+  CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
+  "$CU" act e_1 --snapshot "$snapshot" --background --json
+)
+assert_contains "$background_action" '"background":true' "background action reports its no-focus mode"
+assert_contains "$background_action" '"verification":{"available":false,"changed":null' "background action skips pixels and pointer fallback"
+pass "background action path"
 
 if stale=$(
   CU_DIR="$TMP/runtime-state" \
