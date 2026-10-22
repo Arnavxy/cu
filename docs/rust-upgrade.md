@@ -35,7 +35,9 @@ installation uses the same script but requires Rust and Xcode Command Line Tools
 Configure MCP clients to launch `cu-mcp` directly from its installed absolute
 path. Older source configurations using `scripts/cu-mcp.py` have a deprecated
 exec-only compatibility shim; Python is not part of the server implementation.
-Restart an MCP client after replacing its running server. The `bin/cu` checkout
+Restart an MCP client after replacing its running server.
+The downloadable binaries are ad hoc signed, not Developer ID notarized.
+macOS security and permission checks still apply; source builds are available. The `bin/cu` checkout
 launcher is similarly a small build-location wrapper; installed `cu` is Rust.
 
 All four executables should be upgraded together. Helper lookup resolves the
