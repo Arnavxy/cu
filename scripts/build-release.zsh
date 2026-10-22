@@ -10,7 +10,7 @@ case "$TARGET" in
   *) print -u2 "unsupported release target: $TARGET"; exit 2 ;;
 esac
 VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/cu-runtime/Cargo.toml" | head -1)"
-[[ "$VERSION" == 0.5.0 ]] || { print -u2 "unexpected release version: $VERSION"; exit 2; }
+[[ "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || { print -u2 "unexpected release version: $VERSION"; exit 2; }
 LIBDIR="$(rustc --print target-libdir --target "$TARGET")"
 [[ -d "$LIBDIR" ]] || { print -u2 "Missing Rust standard library for $TARGET. Install with rustup target add $TARGET, or use the macOS release workflow."; exit 2; }
 MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --locked --release --manifest-path "$ROOT/cu-runtime/Cargo.toml" --target-dir "$ROOT/cu-runtime/target" --target "$TARGET" --bins

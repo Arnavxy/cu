@@ -103,4 +103,3 @@ measured process boundaries and unnecessary observation/capture calls before
 considering instruction-level changes. For production latency claims, separately
 measure real applications, permissions, stale-state recovery, and end-to-end
 task success; these mock benchmarks establish none of those guarantees.
-

@@ -2,6 +2,7 @@
 # Release/install smoke test uses a disposable destination and never ~/bin.
 set -eu
 ROOT="${0:A:h:h}"
+VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/cu-runtime/Cargo.toml" | head -1)"
 ARCHIVES=("$ROOT"/dist/*.tar.gz(N))
 ARCHIVE="${1:-${ARCHIVES[1]:-}}"
 [[ -f "$ARCHIVE" ]] || { print -u2 'build a release archive first'; exit 1; }
@@ -14,9 +15,9 @@ PACKAGES=("$TMP"/cu-*(/))
 PACKAGE="$PACKAGES[1]"
 [[ ! -e "$PACKAGE/cu-runtime" && ! -e "$PACKAGE/voice-runtime" && ! -e "$PACKAGE/Sources" ]]
 CU_INSTALL_DIR="$TMP/installed" "$PACKAGE/scripts/install.zsh"
-[[ "$("$TMP/installed/cu" --version)" == 'cu 0.5.0' ]]
+[[ "$("$TMP/installed/cu" --version)" == "cu $VERSION" ]]
 RESPONSE="$(print -r -- '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | "$TMP/installed/cu-mcp")"
-[[ "$RESPONSE" == *'0.5.0'* ]] || { print -u2 'MCP version mismatch'; exit 1; }
+[[ "$RESPONSE" == *"\"version\":\"$VERSION\""* ]] || { print -u2 'MCP version mismatch'; exit 1; }
 for BIN in cu cu-native cu-input cu-mcp; do
   [[ -x "$TMP/installed/$BIN" ]]
   codesign --verify --strict "$TMP/installed/$BIN"
