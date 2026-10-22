@@ -1,0 +1,330 @@
+[
+  {
+    "name": "cu_observe",
+    "description": "Observe bounded native Accessibility JSON, Set native_only=true to prohibit screenshot/OCR fallback; the existing automatic local OCR behavior remains the default. Use background and since to reduce interruption and repeated context. Set draft_values=true only for a requested send review to read bounded exact nonsecure composer fields; incomplete reads are explicit, and default editable values remain omitted.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "background": {
+          "type": "boolean"
+        },
+        "since": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "all": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "max_elements": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "native_only": {
+          "type": "boolean",
+          "default": false
+        },
+        "draft_values": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "app"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_act",
+    "description": "Act on a snapshot-scoped cu element. Set background for AX-only execution with no focus, screenshots, or pointer fallback. Use native_only=true for semantic verification without capture; unchanged results remain indeterminate.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "element": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "snapshot": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "background": {
+          "type": "boolean"
+        },
+        "verify": {
+          "type": "boolean",
+          "default": true
+        },
+        "native_only": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "element",
+        "snapshot"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_audit",
+    "description": "Audit a native Accessibility tree without screenshots: unnamed interactive controls, duplicate accessible names, and generic-element counts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "max_issues": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "app"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_wait",
+    "description": "Wait for a window, semantic element/value, stability, or visual change.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "window",
+            "element",
+            "value",
+            "stable",
+            "changed"
+          ],
+          "maxLength": 1024
+        },
+        "app": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "role": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "gone": {
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
+        }
+      },
+      "required": [
+        "mode",
+        "app"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_batch",
+    "description": "Run a guarded line-oriented cu action batch in one process.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "script": {
+          "type": "string",
+          "maxLength": 65536
+        }
+      },
+      "required": [
+        "script"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_shot",
+    "description": "Capture a full screen or named app window to a local PNG.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_click",
+    "description": "Click logical macOS screen coordinates. Supply app to refuse clicks unless that app is frontmost; set window_relative when coordinates came from a window capture.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "app": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "window_relative": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_clickel",
+    "description": "Click a native Accessibility element by app and accessible name, with role/index disambiguation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "role": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "app",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_type",
+    "description": "Type text into the focused field; use paced for fragile Simulator/custom fields.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "paced": {
+          "type": "boolean"
+        },
+        "interval_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "secret": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_read",
+    "description": "Read the current Safari/Chromium document using native Accessibility. No screenshot, OCR, focus change or page JavaScript. Returns bounded text, verified URL and explicit partial coverage. Read-only; use observe for actionable handles. Optional url selects a unique visible browser document by origin/path across that app\u2019s windows, without focus changes. Query strings and fragments do not distinguish documents; duplicate matches fail safely. Use this to retain a known page when a profile picker or another window is in front.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        }
+      },
+      "required": [
+        "app"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cu_select_file",
+    "description": "Select a represented local regular file through a verified native macOS Open panel. Bind the observed PID/window and provide captured expected_source metadata to reject source replacements before selection. English native panels only. No screenshots or arbitrary keyboard commands. Dispatch is not upload/send/delivery proof; inspect the prepared attachment and obtain required send approval separately. Never replay an uncertain result.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2147483647
+        },
+        "window_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "expected_source": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "app",
+        "pid",
+        "window_id",
+        "path",
+        "expected_source"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

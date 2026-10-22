@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented here.
 
+## 0.5.0 - 2026-10-22
+
+### Changed
+
+- Replaced the production shell CLI, Python MCP server and Swift native helper
+  with compiled Rust `cu`, `cu-mcp`, `cu-native` and `cu-input` executables.
+- Preserved snapshot-scoped actions, structured results/errors, semantic
+  observation/waits, no-focus native operations, local OCR and screenshot fallback.
+- Native batches validate their full input before any mutation. MCP stdio
+  framing, validation and output are bounded; user text travels over stdin.
+- Removed the required `cliclick` dependency; explicit fixture/integration
+  overrides remain supported. CLI/helper versions come from Cargo metadata.
+- Added shared cooperative input leases, native document/file context and
+  metadata-bound attachment selection without requiring screenshots.
+
+### Distribution and verification
+
+- Added matching Apple Silicon/Intel release archives, checksums, Rust CI checks,
+  isolated installation tests and an updated Homebrew distribution.
+- Added reproducible benchmark methodology against the published v0.4.1 runtime;
+  measured command overhead is reported separately from actual application latency.
+- Kept the separate CU Voice app and all personal state out of this release.
+
 ## 0.2.3 - 2026-09-21
 
 ### Fixed

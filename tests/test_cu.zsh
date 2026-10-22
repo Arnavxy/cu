@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="${0:A:h:h}"
-CU="$ROOT/bin/cu"
+CU="${CU_TEST_BIN:-$ROOT/bin/cu}"
 TMP="${TMPDIR:-/tmp}/cu-test.$$.${RANDOM}"
 mkdir -p "$TMP"
 trap 'rm -rf "$TMP"' EXIT
@@ -13,10 +13,14 @@ pass() { print -r -- "ok - $1"; }
 fail() { print -r -- "not ok - $1" >&2; exit 1; }
 assert_contains() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 
-zsh -n "$CU" || fail "script parses"
+zsh -n "$ROOT/bin/cu" || fail "script parses"
 pass "script parses"
 
-assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu 0.4.1" "version is reported"
+cargo test --quiet --manifest-path "$ROOT/cu-runtime/Cargo.toml" --bin cu-native || fail "native Rust contract tests"
+pass "native Rust contract tests"
+
+expected_version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/cu-runtime/Cargo.toml" | head -1)"
+assert_contains "$(CU_DIR="$TMP/state" "$CU" --version)" "cu $expected_version" "version is reported"
 pass "version command"
 
 help="$("$CU" --help)"
@@ -187,15 +191,15 @@ pass "pointer flag ordering and frontmost guard"
 
 deduped=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CU_MOCK_DUPLICATE=1 "$CU" --json observe Demo --all)
 assert_contains "$deduped" '"id":"e_2"' "observe preserves distinct same-name controls"
-[[ "$deduped" != *'"id":"e_3"'* ]] || fail "observe did not remove exact AX mirrors"
-pass "observe deduplicates AX mirrors"
+assert_contains "$deduped" '"id":"e_3"' "observe preserves distinct AX paths even when their visible labels and bounds match"
+pass "observe preserves distinct AX identity"
 
 scroll_scope=$(CU_DIR="$TMP/state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CU_MOCK_SCROLLABLE=1 "$CU" --json observe Demo --all)
 assert_contains "$scroll_scope" '"may_contain_scrolled_out":true' "observe reports viewport-limited AX coverage"
 assert_contains "$scroll_scope" '"complete":false' "observe marks viewport coverage incomplete"
 pass "observe visibility scope"
 
-mcp_output=$(printf '%s\n' 'not json' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | CU_BIN="$CU" python3 "$ROOT/scripts/cu-mcp.py")
+mcp_output=$(printf '%s\n' 'not json' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | CU_BIN="$CU" "$ROOT/cu-runtime/target/release/cu-mcp")
 assert_contains "$mcp_output" '"serverInfo"' "MCP accepts NDJSON requests after malformed lines"
 [[ "$mcp_output" != *'Content-Length'* ]] || fail "MCP must emit NDJSON responses"
 pass "NDJSON MCP transport"
@@ -210,7 +214,7 @@ assert_contains "$paste_result" '"ok":true' "paste returns JSON success"
 assert_contains "$paste_result" '"pasted_chars":12' "paste reports character count"
 pass "clipboard-safe multiline paste"
 
-CLICLICK=/usr/bin/true CU_DIR="$TMP/state" "$CU" scroll top 2 >/dev/null
+CLICLICK="$ROOT/tests/fixtures/mock-cliclick" CU_DIR="$TMP/state" "$CU" scroll top 2 >/dev/null
 pass "keyboard scroll fallback"
 
 scroll_log="$TMP/scroll-native.log"
@@ -319,7 +323,7 @@ delta_observation=$( \
   CU_NATIVE="$ROOT/tests/fixtures/mock-native" \
   "$CU" observe Demo --background --since "$(print -r -- "$background_observation" | sed -n 's/.*"snapshot":"\([^"]*\)".*/\1/p')" --json
 )
-assert_contains "$delta_observation" '"delta":{"from":' "delta observation identifies its baseline"
+python3 -c 'import json,sys; assert json.loads(sys.argv[1])["delta"]["from"] == json.loads(sys.argv[2])["snapshot"]' "$delta_observation" "$background_observation" || fail "delta observation identifies its baseline"
 assert_contains "$delta_observation" '"unchanged":2' "delta observation suppresses unchanged elements"
 assert_contains "$delta_observation" '"elements":[]' "delta observation returns no unchanged elements"
 pass "delta observation is token-bounded"
@@ -387,3 +391,32 @@ assert_contains "$stale" '"code":"stale_snapshot"' "stale snapshot has structure
 pass "stale snapshot rejection"
 
 print -r -- "all tests passed"
+
+# An input helper rejection must not be reported as a successful keystroke.
+fail_input="$TMP/reject-input"
+print -r -- '#!/bin/zsh' 'exit 1' > "$fail_input"
+chmod 755 "$fail_input"
+if failure=$(CU_DIR="$TMP/state" CLICLICK="$fail_input" "$CU" --json key return 2>&1); then
+  fail "input helper failure was reported as success"
+fi
+assert_contains "$failure" '"ok":false' "input rejection is structured"
+assert_contains "$failure" 'CU input failed' "input rejection propagates"
+pass "input helper failures fail closed"
+
+# A titlebar-only Teams tree must not hide the local text fallback.
+teams_sparse=$(CU_DIR="$TMP/teams-sparse" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CU_MOCK_TEAMS_CHROME_ONLY=1 CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" CU_SIPS="$ROOT/tests/fixtures/mock-sips" "$CU" observe 'Microsoft Teams' --background --json)
+assert_contains "$teams_sparse" '"source":"vision_ocr"' "Teams titlebar-only native tree uses local text OCR"
+pass "Teams sparse native content falls back to local text"
+
+browser_sparse=$(CU_DIR="$TMP/browser-sparse" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CU_MOCK_BROWSER_SPARSE=1 CU_SCREENCAPTURE="$ROOT/tests/fixtures/mock-screencapture" CU_SIPS="$ROOT/tests/fixtures/mock-sips" "$CU" observe Chrome --background --all --json)
+assert_contains "$browser_sparse" '"source":"vision_ocr"' "Browser toolbar without page body uses local text OCR"
+pass "Browser missing native body falls back to local text"
+
+# Native-only observation must never silently invoke capture/OCR.
+native_only_log="$TMP/native-only.log"
+if native_only=$(CU_DIR="$TMP/native-only-state" CU_NATIVE="$ROOT/tests/fixtures/mock-native" CU_MOCK_NATIVE_AX_UNAVAILABLE=1 CU_MOCK_NATIVE_LOG="$native_only_log" CU_SCREENCAPTURE=/nonexistent/no-capture "$CU" observe Demo --background --native-only --json); then
+  fail "native-only unavailable tree must report failure"
+fi
+assert_contains "$native_only" 'native_ax_unavailable' "native-only returns structured fallback reason"
+if grep -q 'ocr' "$native_only_log"; then fail "native-only must not invoke OCR"; fi
+pass "native-only observation avoids image capture and OCR"

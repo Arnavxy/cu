@@ -16,6 +16,18 @@ Use `cu` as the local macOS eyes-and-hands layer. It operates in logical screen 
 
 ## Efficient interaction loop
 
+CU 0.5.0 provides compiled Rust CLI, MCP, native and input binaries. For
+read-only browser text, prefer `cu read "Safari" --json` (or the exact browser).
+It returns native text, URL and coverage metadata without a screenshot; reading
+coverage can be partial. Obtain actionable handles separately with `observe`.
+When Accessibility exposes the intended action and changing focus is unnecessary,
+use `cu act e_N --snapshot s_ID --native-only --background --json`. This path
+verifies native state without screenshots, pointer input or focus changes.
+Check its actual effect; an unchanged tree is not proof the task succeeded.
+Use scoped OCR/screenshots when native inspection cannot recover, and ordinary
+foreground actions when the requested task genuinely needs focus or pointer UI.
+
+
 1. Work in the background by default: start with `cu observe "App" --background --json --max-elements N`, adding `--name TEXT` or `--role ROLE` when known. Native AX can inspect a background app without stealing the user's focus. For polling, use `cu observe "App" --background --since s_ID --json` and reason only over additions, removals, and changed elements. Filter the JSON locally to relevant names, roles, and safe read-only values instead of returning a large accessibility tree to the model. Values from editable or password-like controls are intentionally omitted.
 2. Use `cu open "App"` only when foreground input is actually necessary. Background observation uses native AX first and can fall back to local CoreGraphics-window OCR without reading the occluding foreground app.
    `visibility.may_contain_scrolled_out` is conservatively true because AX does not prove offscreen completeness; absence means “not in the current viewport,” not “does not exist.” Scroll and observe again before reporting a missing control.

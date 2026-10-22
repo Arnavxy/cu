@@ -1,0 +1,2 @@
+# Historical implementations are retained as test/benchmark oracles.
+tests/reference/** linguist-vendored=true

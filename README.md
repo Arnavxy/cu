@@ -6,6 +6,12 @@
 
 **A fast, token-aware computer-use runtime for macOS agents—complementing Playwright with native macOS Accessibility, mouse, keyboard, OCR, screenshots, and verified actions across arbitrary apps.**
 
+Version **0.5.0** runs the CLI, MCP server, native helper, and input delivery as
+compiled Rust binaries. The calling agent still decides what to do. CU supplies
+compact observations, guarded actions, and verification; no model, API key, or
+voice app is bundled. See [migration notes](docs/rust-upgrade.md) and
+[performance measurements](docs/rust-performance.md).
+
 `cu` observes the real macOS desktop, exposes interactive UI elements as compact
 JSON, acts on snapshot-scoped handles, and verifies the result. It gives an
 agent reliable “eyes and hands” without requiring a full screenshot for every
@@ -22,6 +28,8 @@ brew install Arnavxy/tap/cu
 cu doctor
 ```
 
+Existing users: `brew update && brew upgrade Arnavxy/tap/cu`.
+
 Requires macOS 13 Ventura or newer. Grant Accessibility to the terminal or
 agent running `cu`; screenshot and OCR commands also require Screen Recording.
 
@@ -32,7 +40,7 @@ observation="$(cu observe "Xcode" --background --json)"
 snapshot="$(jq -r '.snapshot' <<< "$observation")"
 target="$(jq -r '.elements[] | select(.name == "Clone…") | .id' <<< "$observation")"
 
-cu act "$target" --snapshot "$snapshot" --json
+cu act "$target" --snapshot "$snapshot" --native-only --background --json
 ```
 
 ```json
@@ -121,18 +129,21 @@ surrounding labels and other named elements when the agent needs more context.
 
 - macOS 13 Ventura or newer
 - Xcode Command Line Tools
-- [`cliclick`](https://github.com/BlueM/cliclick) for pointer and keyboard input
+- Rust 1.88 or newer for source builds (edition 2024)
+- The bundled Rust `cu-input` supplies keyboard and pointer input; `cliclick` is optional only when explicitly selected through `CLICLICK`
 
 ```bash
 xcode-select --install
-brew install cliclick
 git clone https://github.com/Arnavxy/cu.git
 cd cu
 ./scripts/install.zsh
 ```
 
-The installer builds the optimized Swift helper and installs `cu` and
-`cu-native` to `~/bin`. Override the destination with `CU_INSTALL_DIR`.
+The source installer builds optimized Rust binaries and installs `cu`,
+`cu-native`, `cu-input`, and `cu-mcp` to `~/bin`. Override the destination with
+`CU_INSTALL_DIR`. Downloaded release archives also contain an installer and need
+no Rust, Python, Swift runtime, or third-party input tool. macOS system utilities
+and frameworks remain available to the native implementation.
 
 Grant Accessibility to the terminal or agent process under **System Settings →
 Privacy & Security → Accessibility**. Screenshot and OCR commands also need
@@ -271,8 +282,8 @@ timings.
 
 ### Optional MCP adapter
 
-The core install stays CLI-only. Agents that speak MCP can install the
-dependency-free adapter separately:
+The Rust MCP server is included in release archives and source installations.
+To refresh it from a source checkout:
 
 ```bash
 ./scripts/install-mcp.zsh
@@ -297,7 +308,7 @@ engine, or background service.
 | `CU_PASTE_READY_DELAY` | `0.02` | Clipboard propagation delay before Cmd-V |
 | `CU_PASTE_RESTORE_DELAY` | `0.35` | Delay before restoring the caller's clipboard after Cmd-V |
 | `CU_TYPE_INTERVAL_MS` | `180` | Inter-key delay used by `cu type --paced` for fragile input surfaces |
-| `CLICLICK` | discovered from `PATH` | Input backend |
+| `CLICLICK` | sibling Rust `cu-input` | Explicit optional input-backend override |
 | `CU_NATIVE` | sibling `cu-native` | Native AX/CoreGraphics/Vision helper |
 | `CU_OSASCRIPT` | `/usr/bin/osascript` | Legacy bridge and test override |
 | `CU_SCREENCAPTURE` | `/usr/sbin/screencapture` | Capture backend and test override |

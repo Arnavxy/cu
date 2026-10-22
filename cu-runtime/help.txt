@@ -1,0 +1,46 @@
+cu — computer-use harness (logical points throughout)
+
+SEE (cheap first, image only if needed)
+  cu observe "App" --json      snapshot window + native AX/OCR elements with stable IDs
+                              filter with --role ROLE --name TEXT --max-elements N
+                              add --background to inspect without stealing focus (AX only)
+  cu audit "App" --json        inspect Accessibility quality without screenshots
+  cu [--json] tree "App" [filter] interactive elements + click coords — TEXT, ~0 tokens
+                              (activates the app; add --all for every element)
+  cu find "App" "Save"        same, filtered
+  cu shot [name]              full screen -> ~/.cu/shots/<name>.png  (~1.6k tokens to read)
+  cu shot -w "App"            one window only
+  cu color X Y                RGB at a pixel — verify a click for free
+  cu diff before after        did the screen change? byte compare, no tokens
+
+ACT
+  cu act e_12 --snapshot s_ID --json
+                              act on a snapshot element and verify the result
+                              add --background for AX-only action with no focus, pixels, or mouse fallback
+  cu clickel "App" "Save"     click by name; add --role ROLE --index N for duplicates
+  cu clicktext "App" "Save"   OCR fallback: click visible text without AX
+  cu click X Y                also dclick, rclick, move; add --app APP to guard or --window APP for relative points
+  cu drag X1 Y1 X2 Y2
+  cu type "text"              add --paced [--interval MS] for fragile fields
+  cu read APP                native browser text and verified URL; no screenshots
+  cu paste --stdin            fast multiline paste; restores the previous clipboard
+  cu key return               esc tab space arrow-up f1 delete ...
+  cu combo cmd s              cu combo cmd shift 4
+  cu scroll [--app "App"] [--at X Y] down|up|top|bottom [n]
+  cu wait MS                  bounded delay
+  cu wait --window APP TITLE [--gone] [--timeout MS]
+                              wait for a real window state, not a guess
+  cu wait --element APP NAME [--role ROLE] [--gone] [--timeout MS]
+  cu wait --value APP VALUE [--gone] [--timeout MS]
+  cu wait --stable|--changed APP [--timeout MS]
+  cu batch --stdin            run guarded actions from one process
+
+CONTEXT
+  cu apps / cu windows ["Safari"] / cu open "Safari" / cu bounds "Safari"
+
+UPKEEP
+  cu doctor                   permissions + disk usage
+  cu clean                    delete all stored screenshots
+  cu log [n]                  action history
+
+Shots auto-prune to the newest 20 (override with CU_KEEP_SHOTS).

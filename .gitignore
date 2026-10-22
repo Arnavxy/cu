@@ -3,3 +3,9 @@
 *.swp
 bin/cu-native
 artifacts/
+
+cu-runtime/target/
+__pycache__/
+*.pyc
+build/
+dist/

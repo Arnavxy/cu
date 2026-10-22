@@ -3,6 +3,18 @@
 mock_window_id="${CU_MOCK_WINDOW_ID:-42}"
 case "${1:-}" in
   context)
+    if [[ "${CU_MOCK_BROWSER_SPARSE:-0}" == 1 ]]; then
+      print -r -- $'META\t42\t4242\t100\t200\t800\t600\tChrome\tSearch\tcom.google.Chrome'
+      print -r -- $'QUALITY\t{"browser":true,"web_content_unavailable":true,"sparse_web_area":true}'
+      print -r -- $'AX\tw0.0\tAXWebArea\tSearch\t100\t200\t800\t600\t\t'
+      print -r -- $'AX\tw0.1\tAXButton\tReload\t125\t235\t50\t30\tAXPress\t'
+      exit 0
+    fi
+    if [[ "${CU_MOCK_TEAMS_CHROME_ONLY:-0}" == 1 ]]; then
+      print -r -- $'META\t42\t4242\t100\t200\t800\t600\tMicrosoft Teams\tChat\tcom.microsoft.teams2'
+      print -r -- $'AX\tw0.0\tAXButton\tthis button also has an action to zoom the window\t125\t235\t50\t30\tAXPress\t'
+      exit 0
+    fi
     printf 'META\t%s\t4242\t100\t200\t800\t600\tDemo\tDemo Window\tcom.example.Demo\n' "$mock_window_id"
     if [[ "${CU_MOCK_NATIVE_AX_UNAVAILABLE:-0}" != 1 ]]; then
       print -r -- $'AX\tw0.0\tAXButton\tSave\t125\t235\t50\t30\tAXPress\t56'

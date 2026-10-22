@@ -1,8 +1,6 @@
 #!/bin/zsh
+# Preserve the historical destination override; install matching sibling helpers.
 set -eu
-
 ROOT="${0:A:h:h}"
-DEST="${CU_MCP_INSTALL_DIR:-$HOME/bin}"
-mkdir -p "$DEST"
-install -m 755 "$ROOT/scripts/cu-mcp.py" "$DEST/cu-mcp"
-print -r -- "installed optional cu MCP adapter to $DEST/cu-mcp"
+export CU_INSTALL_DIR="${CU_MCP_INSTALL_DIR:-${CU_INSTALL_DIR:-$HOME/bin}}"
+exec "$ROOT/scripts/install.zsh" "$@"
